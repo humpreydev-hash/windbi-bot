@@ -1,4 +1,4 @@
-// index.js - Versi Railway Ready
+// index.js - Versi Railway Ready (Instagram Scraper Fixed)
 
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage, jidDecode } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -197,21 +197,30 @@ async function tosCommand(sock, message, text) {
     }
 }
 
-// 5. Instagram Downloader
+// 5. Instagram Downloader (FIXED)
 async function igCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!' });
     try {
-        const { igdl } = await import('priyansh-ig-downloader');
-        const data = await igdl(url);
-        let resultText = `*Instagram Downloader*\n\n`;
-        for (const item of data) {
-            await sock.sendMessage(message.key.remoteJid, { [item.type === 'image' ? 'image' : 'video']: { url: item.download_link } });
+        const { Insta } = await import('instagram-scraper');
+        const insta = new Insta();
+        const data = await insta.getPost(url);
+
+        if (data && data.media) {
+            for (const item of data.media) {
+                if (item.type === 'image') {
+                    await sock.sendMessage(message.key.remoteJid, { image: { url: item.url } });
+                } else if (item.type === 'video') {
+                    await sock.sendMessage(message.key.remoteJid, { video: { url: item.url } });
+                }
+            }
+            await sock.sendMessage(message.key.remoteJid, { text: `*Instagram Downloader*\n\n👤 *Author:* ${data.author.username}\n💬 *Caption:* ${data.caption || 'No caption'}` });
+        } else {
+            throw new Error('Tidak dapat mengambil data dari Instagram.');
         }
-        await sock.sendMessage(message.key.remoteJid, { text: resultText });
     } catch (error) {
         console.error(error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar.' });
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar dan bukan akun privat.' });
     }
 }
 
