@@ -212,16 +212,26 @@ async function playytCommand(sock, message, text) {
     if (!query) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan judul lagu!' });
     try {
         const { data } = await axios.get(`https://api-faa.my.id/faa/ytplay?query=${encodeURIComponent(query)}`);
-        if (!data.status || !data.result) throw new Error('API Error');
         
+        console.log('YouTube Play API Response:', JSON.stringify(data, null, 2));
+
+        if (!data.status || !data.result) throw new Error('API Error: Invalid response from YouTube API');
+
+        const audioUrl = data.result.audio || data.result.audio_url || data.result.download_url;
+        const title = data.result.title || 'No Title';
+
+        if (!audioUrl) {
+            throw new Error('API Error: Audio URL not found in response');
+        }
+
         await sock.sendMessage(message.key.remoteJid, { 
-            audio: { url: data.result.audio }, 
+            audio: { url: audioUrl }, 
             mimetype: 'audio/mpeg',
-            caption: `*${data.result.title}*`
+            caption: `*${title}*`
         });
     } catch (error) {
-        console.error(error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh lagu. Pastikan judul benar.' });
+        console.error("YouTube Play Error:", error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh lagu. Pastikan judul benar atau coba lagi nanti.' });
     }
 }
 
@@ -231,12 +241,14 @@ async function igCommand(sock, message, text) {
     try {
         const { data } = await axios.get(`https://api-faa.my.id/faa/igdl?url=${encodeURIComponent(url)}`);
         
+        console.log('Instagram API Response:', JSON.stringify(data, null, 2));
+
         if (!data.status || !data.result) throw new Error('API Error: Invalid response from Instagram API');
 
         const result = data.result;
         let caption = `*Instagram Downloader*\n\n👤 *Author:* ${result.author || 'Unknown'}\n💬 *Caption:* ${result.caption || 'No caption'}\n\n`;
 
-        const mediaUrls = result.media_urls || result.urls;
+        const mediaUrls = result.media_urls || result.urls || result.media;
         const singleUrl = result.url || result.video_url || result.image_url;
 
         if (mediaUrls && Array.isArray(mediaUrls)) {
@@ -274,6 +286,8 @@ async function ttCommand(sock, message, text) {
     try {
         const { data } = await axios.get(`https://api-faa.my.id/faa/tiktok?url=${encodeURIComponent(url)}`);
         
+        console.log('TikTok API Response:', JSON.stringify(data, null, 2));
+
         if (!data.status || !data.result) throw new Error('API Error: Invalid response from TikTok API');
 
         const result = data.result;
