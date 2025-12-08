@@ -1,4 +1,4 @@
-// index.js - Semua Fitur dalam Satu File (Super Lengkap)
+// index.js - Versi Railway Ready
 
 import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage, jidDecode } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -22,7 +22,11 @@ const __dirname = path.dirname(__filename);
 const ownerNumber = '6285929088764@s.whatsapp.net'; // Ganti dengan nomor WA kamu
 const botPrefix = '.';
 let selfMode = false; // State untuk mode self
-const dbPath = path.join(__dirname, 'verified_users.db');
+
+// Path untuk Railway (sesuaikan)
+const sessionId = process.env.RAILWAY_SERVICE_NAME || 'session';
+const dbPath = path.join('/tmp', 'verified_users.db'); // Database di /tmp agar tidak hilang
+const authPath = path.join(__dirname, 'auth_info_' + sessionId); // Sesi unik per service
 // -------------------------
 
 // --- FUNGSI DATABASE ---
@@ -47,6 +51,7 @@ function addUserToDatabase(jid) {
         db.close();
     });
 }
+// -------------------------
 
 // --- FUNGSI HELPER ---
 function extractMessageText(msg) {
@@ -64,7 +69,7 @@ function parseMention(text) {
 
 // --- FUNGSI-FUNGSI FITUR ---
 
-// 1. Menu Lengkap
+// 1. Menu (Teks Saja untuk Railway)
 async function showMenu(sock, message) {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
@@ -146,8 +151,7 @@ github: ${githubLink}
 > copyright aal dev
 > humpreyDEV
     `;
-    const imagePath = path.join(__dirname, 'menu.jpg');
-    await sock.sendMessage(message.key.remoteJid, { image: { url: imagePath }, caption: menuText });
+    await sock.sendMessage(message.key.remoteJid, { text: menuText });
 }
 
 // 2. Verify
@@ -178,9 +182,7 @@ async function tosCommand(sock, message, text) {
     try {
         const { result } = await import('@tobyg74/tiktok-api-dl');
         const data = await result(url);
-        
         let resultText = `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title}\n\n`;
-        
         if (data.type === 'video') {
             await sock.sendMessage(message.key.remoteJid, { video: { url: data.video[0] }, caption: resultText });
         } else if (data.type === 'image') {
@@ -202,7 +204,6 @@ async function igCommand(sock, message, text) {
     try {
         const { igdl } = await import('priyansh-ig-downloader');
         const data = await igdl(url);
-        
         let resultText = `*Instagram Downloader*\n\n`;
         for (const item of data) {
             await sock.sendMessage(message.key.remoteJid, { [item.type === 'image' ? 'image' : 'video']: { url: item.download_link } });
@@ -223,7 +224,7 @@ async function playytCommand(sock, message, text) {
         if (searchResults.length === 0) throw new Error('Lagu tidak ditemukan');
         const video = searchResults[0];
         const stream = ytdl(video.videoDetails.video_url, { filter: 'audioonly', quality: 'highestaudio' });
-        const tempPath = path.join(__dirname, `temp_audio_${Date.now()}.mp3`);
+        const tempPath = path.join('/tmp', `temp_audio_${Date.now()}.mp3`); // Simpan di /tmp
         await writeFile(tempPath, stream);
         await sock.sendMessage(message.key.remoteJid, { audio: { url: tempPath }, mimetype: 'audio/mpeg' });
         await unlink(tempPath);
@@ -264,7 +265,6 @@ async function tomediaCommand(sock, message) {
         for await (const chunk of stream) {
             buffer = Buffer.concat([buffer, chunk]);
         }
-        // Stiker bisa jadi animasi (webp) atau statis. Kita coba kirim sebagai gambar.
         await sock.sendMessage(message.key.remoteJid, { image: buffer }, { quoted: message });
     } catch (error) {
         console.error("Gagal mengkonversi stiker:", error);
@@ -368,7 +368,7 @@ async function startBot() {
     });
     db.close();
 
-    const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info'));
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
     const { version, isLatest } = await fetchLatestBaileysVersion();
     console.log(`Menggunakan WA Web v${version.join('.')}, isLatest: ${isLatest}`);
 
@@ -386,6 +386,9 @@ async function startBot() {
         if (qr) {
             console.log('Scan QR code ini dengan WhatsApp Anda:');
             qrcode.generate(qr, { small: true });
+            // Tampilkan URL QR untuk Railway
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
+            console.log(`Atau buka link ini di browser: ${qrUrl}`);
         }
         if (connection === 'close') {
             const shouldReconnect = new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -398,6 +401,7 @@ async function startBot() {
         }
     });
 
+    // Listener untuk pesan masuk
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return;
         const msg = messages[0];
