@@ -1,55 +1,4 @@
 {
-<<<<<<< HEAD
-  "name": "Whatsapp-chatgpt",
-  "version": "1",
-  "description": "WHATSAPP CHATGPT BOT, USING OPENAI",
-  "main": "index.js",
-  "type": "commonjs",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "keywords": [
-    "termux",
-    "whatsapp-openai",
-    "whatsapp-openai",
-    "whatsapp-bot",
-    "whatsapp-baileys",
-    "baileys-md",
-    "bot-wa",
-    "bot-md",
-    "whatsapp-multi-device"
-  ],
-  "base": "https://github.com/harshitethic",
-  "author": "harshitethic",
-  "license": "MIT",
-  "dependencies": {
-    "@adiwajshing/baileys": "4.4.0",
-    "@adiwajshing/keyed-db": "^0.2.4",
-    "awesome-phonenumber": "^2.64.0",
-    "chalk": "^4.1.2",
-    "crypto": "^1.0.1",
-    "figlet": "^1.5.2",
-    "fs": "0.0.1-security",
-    "lodash": "^4.17.21",
-    "openai": "^3.1.0",
-    "pino": "^7.0.5",
-    "qrcode-terminal": "^0.12.0",
-    "util": "^0.12.4"
-  },
-  "directories": {
-    "lib": "lib",
-    "src": "src"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/harshitethic/whatsapp-chatgpt.git"
-  },
-  "bugs": {
-    "url": "https://github.com/harshitethic/whatsapp-chatgpt/issues"
-  },
-  "homepage": "https://github.com/harshitethic/whatsapp-chatgpt#readme"
-}
-=======
   "name": "bot-wa-list-menu",
   "version": "1.0.0",
   "description": "Bot WhatsApp dengan banyak fitur dan menu list button",
@@ -63,7 +12,7 @@
     "axios": "^1.6.2",
     "mime-types": "^2.1.35",
     "qrcode": "^1.5.3",
-    "whatsapp-web.js": "^1.23.0"
+    "whatsapp-web.js": "^1.23.0",
+    "puppeteer": "^21.0.0"
   }
 }
->>>>>>> 43326645c411bef63f9973072eb3d425b290f853
