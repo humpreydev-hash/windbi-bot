@@ -1,896 +1,208 @@
-const { default: makeWASocket, 
-    useMultiFileAuthState, 
-    DisconnectReason,
-    Browsers,
-    fetchLatestBaileysVersion,
-    makeCacheableSignalKeyStore
-} = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode-terminal');
-const fs = require('fs').promises;
-const path = require('path');
-const os = require('os');
-const axios = require('axios');
-const ytdl = require('ytdl-core');
-const yts = require('yt-search');
-const { exec } = require('child_process');
-const util = require('util');
-const moment = require('moment-timezone');
+// index.js
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import qrcode from 'qrcode-terminal';
+import pino from 'pino';
+import fs from 'fs-extra';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import os from 'os';
+import { exec } from 'child_process';
+import util from 'util';
+import axios from 'axios';
+import ytdl from 'ytdl-core';
+import yts from 'yt-search';
+import { fileTypeFromBuffer } from 'file-type';
+import ig from 'instagram-url-direct';
+import { TiktokDL } from 'tiktok-scraper';
 
+// --- KONFIGURASI ---
+const logger = pino({ level: 'silent' });
+const ownerNumber = process.env.OWNER_NUMBER + '@s.whatsapp.net';
+const prefix = '.';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const execAsync = util.promisify(exec);
 
-// Owner number
-const ownerNumber = '6285929088764';
-const prefix = '.';
-
-// Data games
+// Penyimpanan sementara untuk game
 const games = {
-    tebakkata: {
-        questions: [
-            { q: "Apa yang selalu datang tapi tidak pernah sampai?", a: "besok" },
-            { q: "Apa yang punya kaki tapi tidak bisa berjalan?", a: "kursi" },
-            { q: "Apa yang semakin banyak diambil, semakin besar?", a: "lubang" },
-            { q: "Apa yang berat di musim panas, ringan di musim dingin?", a: "nafas" }
-        ],
-        active: new Map()
-    },
-    tebakangka: {
-        active: new Map()
-    },
-    mathquiz: {
-        active: new Map()
-    }
+    tebakkata: { active: new Map() },
+    mathquiz: { active: new Map() },
+    tebakangka: { active: new Map() }
 };
 
-// Simple in-memory store
-const store = {
-    messages: new Map(),
-    contacts: new Map(),
-    groups: new Map()
-};
+// --- FUNGSI HELPER ---
 
-// Fungsi untuk mendapatkan statistik sistem
-async function getSystemStats() {
+async function getSystemInfo() {
+    const cpus = os.cpus();
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    let diskInfo = 'Tidak tersedia';
     try {
-        const cpus = os.cpus();
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
-        const usedMem = totalMem - freeMem;
-        
-        // Get uptime
-        const uptime = os.uptime();
-        const days = Math.floor(uptime / (3600 * 24));
-        const hours = Math.floor((uptime % (3600 * 24)) / 3600);
-        const minutes = Math.floor((uptime % 3600) / 60);
-        const uptimeStr = `${days}d ${hours}h ${minutes}m`;
-        
-        // Get disk info (simplified)
-        let diskInfo = 'Unknown';
-        try {
-            if (process.platform === 'win32') {
-                diskInfo = 'Windows System';
-            } else {
-                // For Unix/Linux/Railways
-                diskInfo = 'Railways/Cloud';
+        if (process.platform !== 'win32') {
+            const { stdout } = await execAsync('df -h /');
+            const lines = stdout.trim().split('\n');
+            if (lines.length > 1) {
+                const parts = lines[1].split(/\s+/);
+                diskInfo = `Used: ${parts[2]} / Total: ${parts[1]} (${parts[4]})`;
             }
-        } catch (error) {
-            diskInfo = 'Error getting disk info';
+        } else {
+            const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption');
+            const lines = stdout.trim().split('\n');
+            if (lines.length > 1) {
+                const parts = lines[1].trim().split(/\s+/);
+                const free = (parseInt(parts[1]) / 1024 / 1024 / 1024).toFixed(2);
+                const size = (parseInt(parts[2]) / 1024 / 1024 / 1024).toFixed(2);
+                diskInfo = `Used: ${(size - free).toFixed(2)}GB / Total: ${size}GB`;
+            }
         }
-        
-        return {
-            cpu: `${cpus[0].model.split(' ')[0]} ${cpus.length} cores`,
-            ram: `${(usedMem / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(2)}GB`,
-            disk: diskInfo,
-            uptime: uptimeStr
-        };
-    } catch (error) {
-        console.error('Error getting system stats:', error);
-        return {
-            cpu: 'Unknown CPU',
-            ram: 'Unknown RAM',
-            disk: 'Unknown Disk',
-            uptime: 'Unknown'
-        };
+    } catch (diskError) {
+        console.error('Error getting disk info:', diskError);
     }
+    return { cpu: `${cpus[0].model} (${cpus.length} cores)`, ram: `${(usedMem / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(2)}GB`, disk: diskInfo };
 }
 
-// Fungsi untuk membuat menu
-async function createMenu() {
-    const stats = await getSystemStats();
-    
-    return `╭╼━━━━━━━━━━━━━━━━━━━━╾❐
-│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔𝗧𝗦𝗔𝗣𝗣
-├╼━━━━━━━━━━━━━━━━━━━━╾╮
-│ 𝗨𝗣𝗧𝗜𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠
-│ • CPU   : ${stats.cpu}
-│ • RAM   : ${stats.ram}
-│ • DISK  : ${stats.disk}
-│ • UPTIME: ${stats.uptime}
-│
-│ 𝗦𝗧𝗔𝗧𝗨𝗦 : 𝙊𝙉𝙇𝙄𝙉𝙀
-├╼━━━━━━━━━━━━━━━━━━━━╾〢
-│ Bot ini dibuat oleh aal
-│ [humpreyDev]. Bot simple
-│ menggunakan Node.js. Ini
-│ adalah project kedua setelah
-│ Windbiom AI.
-╰╼━━━━━━━━━━━━━━━━━━━━╾❏
-
-
-╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗣𝗨𝗕𝗟𝗜𝗞 ⧽━╾❐
-│ • ${prefix}verify
-│ • ${prefix}link
-│ • ${prefix}gig
-│ • ${prefix}github
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗚𝗔𝗠𝗘𝗦 ⧽━╾❐
-│ • ${prefix}tebakkata
-│ • ${prefix}mathquiz
-│ • ${prefix}tebakangka
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗙𝗨𝗡 ⧽━╾❐
-│ • ${prefix}cekiman <@..>
-│ • ${prefix}cekfemboy <@..>
-│ • ${prefix}cekfurry <@..>
-│ • ${prefix}cekjamet <@..>
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-╭╼━⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽━╾❐
-│ • ${prefix}playyt <link>
-│ • ${prefix}yt <url>
-│ • ${prefix}ig <url>
-│ • ${prefix}tt <url>
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗔𝗗𝗠𝗜𝗡 ⧽━╾❐
-│ • ${prefix}kick <@..>
-│ • ${prefix}ban <@..>
-│ • ${prefix}grup buka|tutup
-│ • ${prefix}totag
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗢𝗪𝗡𝗘𝗥 ⧽━╾❐
-│ • ${prefix}npm <library>
-│ • ${prefix}gclone <github link>
-│ • ${prefix}apistatus
-│ • ${prefix}restart
-╰╼━━━━━━━━━━━━━━━━╾❏
-
-
-> Copyright © humpreyDev
-> "Setiap file yang gua ketik,
-> pasti ada 100 error, tapi
-> 1% progress tetap progress."`;
+async function npmSearch(packageName) {
+    try { const { data } = await axios.get(`https://registry.npmjs.org/${packageName}`); return { name: data.name, version: data['dist-tags'].latest, description: data.description, author: data.author?.name || 'Unknown' }; }
+    catch (e) { return null; }
 }
 
-// Fungsi untuk cek status API
-async function checkAPIs() {
-    const apis = [
-        { name: 'YouTube', url: 'https://www.youtube.com' },
-        { name: 'Instagram', url: 'https://www.instagram.com' },
-        { name: 'TikTok', url: 'https://www.tiktok.com' },
-        { name: 'GitHub', url: 'https://github.com' },
-        { name: 'NPM', url: 'https://registry.npmjs.org' },
-        { name: 'Railways', url: 'https://railway.app' }
-    ];
-    
-    let result = '╭╼━⧼ 𝗔𝗣𝗜 𝗦𝗧𝗔𝗧𝗨𝗦 ⧽━╾❐\n';
-    
-    for (const api of apis) {
-        try {
-            await axios.get(api.url, { timeout: 3000 });
-            result += `│ ✅ ${api.name}: ONLINE\n`;
-        } catch (error) {
-            result += `│ ❌ ${api.name}: OFFLINE\n`;
-        }
-    }
-    
-    result += '╰╼━━━━━━━━━━━━━━━━╾❏';
-    return result;
+async function githubInfo(url) {
+    try { const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/); if (!match) return null; const [, owner, repo] = match; const { data } = await axios.get(`https://api.github.com/repos/${owner}/${repo}`); return { name: data.name, fullName: data.full_name, description: data.description, stars: data.stargazers_count, forks: data.forks_count, language: data.language, url: data.html_url }; }
+    catch (e) { return null; }
 }
 
-// Fungsi untuk download YouTube
-async function downloadYouTube(url, type = 'audio') {
-    try {
-        const info = await ytdl.getInfo(url);
-        const format = ytdl.chooseFormat(info.formats, { 
-            quality: type === 'audio' ? 'highestaudio' : 'highest'
-        });
-        
-        return {
-            title: info.videoDetails.title,
-            url: format.url,
-            duration: info.videoDetails.lengthSeconds,
-            thumbnail: info.videoDetails.thumbnails[0].url,
-            type: type
-        };
-    } catch (error) {
-        console.error('YouTube download error:', error);
-        return null;
-    }
-}
-
-// Fungsi untuk search YouTube
-async function searchYouTube(query) {
+async function ytSearchAndDownload(query, sock, msg, type = 'audio') {
     try {
         const search = await yts(query);
-        return search.videos.slice(0, 5);
-    } catch (error) {
-        console.error('YouTube search error:', error);
-        return [];
-    }
+        if (!search.videos.length) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Video tidak ditemukan!' }, { quoted: msg });
+        const video = search.videos[0];
+        await sock.sendMessage(msg.key.remoteJid, { text: `⏳ Mengunduh: *${video.title}*` }, { quoted: msg });
+        const stream = ytdl(video.url, { quality: type === 'audio' ? 'highestaudio' : 'highestvideo' });
+        const chunks = [];
+        for await (const chunk of stream) chunks.push(chunk);
+        const buffer = Buffer.concat(chunks);
+        const { mime } = await fileTypeFromBuffer(buffer);
+        await sock.sendMessage(msg.key.remoteJid, { [type.split(':')[0]]: buffer, mimetype: mime, fileName: `${video.title}.${type.split(':')[0] === 'audio' ? 'mp3' : 'mp4'}`, caption: `✅ *${type === 'audio' ? 'Audio' : 'Video'} dari YouTube*\n\n📌 *Judul:* ${video.title}` }, { quoted: msg });
+    } catch (e) { console.error(e); sock.sendMessage(msg.key.remoteJid, { text: '❌ Gagal mengunduh dari YouTube!' }, { quoted: msg }); }
 }
 
-// Fungsi untuk cek keberuntungan
-function checkLuck(percentage = 100) {
-    const random = Math.floor(Math.random() * percentage);
-    const emoji = random > 80 ? '🎉' : random > 60 ? '😊' : random > 40 ? '😐' : random > 20 ? '😕' : '😢';
-    return `${random}% ${emoji}`;
+async function igDownloader(url, sock, msg) {
+    try { const results = await ig(url); if (!results.url_list || results.url_list.length === 0) throw new Error("No media found"); for (const mediaUrl of results.url_list) { const { data } = await axios.get(mediaUrl, { responseType: 'arraybuffer' }); const { mime } = await fileTypeFromBuffer(data); await sock.sendMessage(msg.key.remoteJid, { [mime.split('/')[0]]: data, mimetype: mime, caption: '✅ *Media dari Instagram*' }, { quoted: msg }); } }
+    catch (e) { console.error(e); sock.sendMessage(msg.key.remoteJid, { text: '❌ Gagal mengunduh dari Instagram!' }, { quoted: msg }); }
 }
 
-// Fungsi untuk membuat button
-function createButtons(buttons) {
-    return {
-        text: 'Pilih menu:',
-        footer: 'Windbi Bot - by humpreyDev',
-        buttons: buttons,
-        headerType: 1
-    };
+async function ttDownloader(url, sock, msg) {
+    try { const result = await TiktokDL(url, { noWatermark: true, version: 'v1' }); if (!result.status) throw new Error("Failed to fetch"); const { data } = await axios.get(result.result.video, { responseType: 'arraybuffer' }); const { mime } = await fileTypeFromBuffer(data); await sock.sendMessage(msg.key.remoteJid, { video: data, mimetype: mime, caption: `✅ *Video dari TikTok*\n\n👤 *Author:* ${result.result.author.nickname}` }, { quoted: msg }); }
+    catch (e) { console.error(e); sock.sendMessage(msg.key.remoteJid, { text: '❌ Gagal mengunduh dari TikTok!' }, { quoted: msg }); }
 }
 
-// Main function
-async function startBot() {
-    console.log('🔄 Membuat sesi bot...');
-    
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    
+function checkLuck() { return `${Math.floor(Math.random() * 101)}%`; }
+
+// --- DEFINISI SEMUA COMMAND ---
+const commands = new Map();
+
+// Menu
+commands.set('menu', { execute: async (sock, msg) => {
+    const from = msg.key.remoteJid; const stats = await getSystemInfo();
+    const menuText = `╭╼━━━━━━━━━━━━━━━━━━━━╾❐\n│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔𝗧𝗦𝗔𝗣𝗣\n├╼━━━━━━━━━━━━━━━━━━━━╾╮\n│ 𝗨𝗣𝗧𝗜𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠\n│ • CPU   : ${stats.cpu}\n│ • RAM   : ${stats.ram}\n│ • DISK  : ${stats.disk}\n│\n│ 𝗦𝗧𝗔𝗧𝗨𝗦 : ✅ Online\n├╼━━━━━━━━━━━━━━━━━━━━╾〢\n│ Bot ini dibuat oleh aal\n│ [humpreyDev].\n╰╼━━━━━━━━━━━━━━━━━━━━╾❏\n\n> Copyright © humpreyDev`;
+    const sections = [
+        { title: "⧼ 𝗠𝗘𝗡𝗨 𝗣𝗨𝗕𝗟𝗜𝗞 ⧽", rows: [{ title: "Verify", rowId: ".verify" }, { title: "Link Grup", rowId: ".link" }] },
+        { title: "⧼ 𝗠𝗘𝗡𝗨 𝗚𝗔𝗠𝗘𝗦 ⧽", rows: [{ title: "Tebak Kata", rowId: ".tebakkata" }, { title: "Math Quiz", rowId: ".mathquiz" }, { title: "Tebak Angka", rowId: ".tebakangka" }] },
+        { title: "⧼ 𝗠𝗘𝗡𝗨 𝗙𝗨𝗡 ⧽", rows: [{ title: "Cek Iman", rowId: ".cekiman" }, { title: "Cek Femboy", rowId: ".cekfemboy" }, { title: "Cek Furry", rowId: ".cekfurry" }, { title: "Cek Jamet", rowId: ".cekjamet" }] },
+        { title: "⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽", rows: [{ title: "Play YouTube", rowId: ".playyt" }, { title: "Download YouTube", rowId: ".yt" }, { title: "Download Instagram", rowId: ".ig" }, { title: "Download TikTok", rowId: ".tt" }] },
+        { title: "⧼ 𝗠𝗘𝗡𝗨 𝗔𝗗𝗠𝗜𝗡 ⧽", rows: [{ title: "Kick Member", rowId: ".kick" }, { title: "Ban Member", rowId: ".ban" }, { title: "Grup Settings", rowId: ".grup" }, { title: "Tag All", rowId: ".totag" }] },
+        { title: "⧼ 𝗠𝗘𝗡𝗨 𝗢𝗪𝗡𝗘𝗥 ⧽", rows: [{ title: "NPM Search", rowId: ".npm" }, { title: "GitHub Clone", rowId: ".gclone" }, { title: "API Status", rowId: ".apistatus" }] },
+    ];
+    const listMessage = { text: menuText, footer: '© humpreyDev', title: "Windbi Bot Menu", buttonText: "Pilih Menu", sections };
+    await sock.sendMessage(from, listMessage);
+}, category: 'public' });
+
+// Public
+commands.set('verify', { execute: async (sock, msg) => { const from = msg.key.remoteJid; const sender = msg.key.participant || from; await sock.sendMessage(from, { text: `✅ Verifikasi berhasil!\n\n@${sender.split('@')[0]} telah terverifikasi.`, mentions: [sender] }, { quoted: msg }); }, category: 'public' });
+commands.set('link', { execute: async (sock, msg) => { const from = msg.key.remoteJid; if (!from.endsWith('@g.us')) return sock.sendMessage(from, { text: '❌ Perintah ini hanya untuk grup!' }, { quoted: msg }); try { const code = await sock.groupInviteCode(from); await sock.sendMessage(from, { text: `https://chat.whatsapp.com/${code}` }, { quoted: msg }); } catch (e) { sock.sendMessage(from, { text: '❌ Gagal mendapatkan link grup!' }, { quoted: msg }); } }, category: 'public' });
+
+// Games
+const tebakkataQuestions = [{ q: "Apa yang selalu datang tapi tidak pernah sampai?", a: "besok" }, { q: "Apa yang punya kaki tapi tidak bisa berjalan?", a: "kursi" }];
+commands.set('tebakkata', { execute: async (sock, msg) => { const from = msg.key.remoteJid; if (games.tebakkata.active.has(from)) return sock.sendMessage(from, { text: '⚠️ Masih ada game yang belum selesai!' }, { quoted: msg }); const randomQ = tebakkataQuestions[Math.floor(Math.random() * tebakkataQuestions.length)]; games.tebakkata.active.set(from, { question: randomQ.q, answer: randomQ.a }); await sock.sendMessage(from, { text: `🎮 *TEBAK KATA*\n\nPertanyaan: "${randomQ.q}"\n\nJawab dengan format: *.jawab [jawaban]*` }, { quoted: msg }); }, category: 'public' });
+commands.set('mathquiz', { execute: async (sock, msg) => { const from = msg.key.remoteJid; if (games.mathquiz.active.has(from)) return sock.sendMessage(from, { text: '⚠️ Masih ada game yang belum selesai!' }, { quoted: msg }); const num1 = Math.floor(Math.random() * 100) + 1; const num2 = Math.floor(Math.random() * 50) + 1; const operators = ['+', '-', '*']; const op = operators[Math.floor(Math.random() * operators.length)]; const answer = eval(`${num1} ${op} ${num2}`); games.mathquiz.active.set(from, { question: `${num1} ${op} ${num2}`, answer }); await sock.sendMessage(from, { text: `🧮 *MATH QUIZ*\n\nSoal: ${num1} ${op} ${num2} = ?\n\nJawab dengan format: *.jawab [angka]*` }, { quoted: msg }); }, category: 'public' });
+commands.set('tebakangka', { execute: async (sock, msg) => { const from = msg.key.remoteJid; if (games.tebakangka.active.has(from)) return sock.sendMessage(from, { text: '⚠️ Masih ada game yang belum selesai!' }, { quoted: msg }); const number = Math.floor(Math.random() * 100) + 1; games.tebakangka.active.set(from, { answer: number }); await sock.sendMessage(from, { text: `🔢 *TEBAK ANGKA*\n\nSaya memikirkan angka antara 1-100\n\nTebak dengan format: *.jawab [angka]*` }, { quoted: msg }); }, category: 'public' });
+commands.set('jawab', { execute: async (sock, msg, args) => { const from = msg.key.remoteJid; const answer = args.join(' ').toLowerCase(); const sender = msg.key.participant || from; let responded = false; if (games.tebakkata.active.has(from)) { const game = games.tebakkata.active.get(from); if (answer === game.answer) { await sock.sendMessage(from, { text: `✅ *BENAR!*\nJawaban "${game.answer}" tepat! 🎉\n\nDijawab oleh @${sender.split('@')[0]}`, mentions: [sender] }, { quoted: msg }); games.tebakkata.active.delete(from); responded = true; } } if (games.mathquiz.active.has(from)) { const game = games.mathquiz.active.get(from); if (parseInt(answer) === game.answer) { await sock.sendMessage(from, { text: `✅ *BENAR!*\n${game.question} = ${game.answer} 🎉\n\nDijawab oleh @${sender.split('@')[0]}`, mentions: [sender] }, { quoted: msg }); games.mathquiz.active.delete(from); responded = true; } } if (games.tebakangka.active.has(from)) { const game = games.tebakangka.active.get(from); const guess = parseInt(answer); if (!isNaN(guess)) { if (guess === game.answer) { await sock.sendMessage(from, { text: `✅ *BENAR!*\nAngka ${game.answer} tepat! 🎉\n\nDitebak oleh @${sender.split('@')[0]}`, mentions: [sender] }, { quoted: msg }); games.tebakangka.active.delete(from); responded = true; } else if (guess < game.answer) { await sock.sendMessage(from, { text: '📈 *TERLALU RENDAH!*\nAngka saya lebih besar.' }, { quoted: msg }); responded = true; } else { await sock.sendMessage(from, { text: '📉 *TERLALU TINGGI!*\nAngka saya lebih kecil.' }, { quoted: msg }); responded = true; } } } if (!responded) await sock.sendMessage(from, { text: '❌ Tidak ada game aktif atau jawaban salah!' }, { quoted: msg }); }, category: 'public' });
+
+// Fun
+const createCekCommand = (title, emoji) => async (sock, msg) => { const from = msg.key.remoteJid; const mentionedJid = msg.message.extendedTextMessage?.mentionedJid || [msg.key.participant || from]; const target = mentionedJid[0]; const percentage = checkLuck(); await sock.sendMessage(from, { text: `📊 *Cek ${title}*\n\nTingkat ${title.toLowerCase()} @${target.split('@')[0]} adalah *${percentage}%* ${percentage > 70 ? emoji[0] : percentage > 40 ? emoji[1] : emoji[2]}`, mentions: [target] }, { quoted: msg }); };
+commands.set('cekiman', { execute: createCekCommand('Iman', ['🌟', '😐', '🔥']), category: 'public' });
+commands.set('cekfemboy', { execute: createCekCommand('Femboy', ['👗', '🤔', '👨']), category: 'public' });
+commands.set('cekfurry', { execute: createCekCommand('Furry', ['🐾', '🦊', '👨']), category: 'public' });
+commands.set('cekjamet', { execute: createCekCommand('Jamet', ['🧢', '🤨', '😎']), category: 'public' });
+
+// Downloader
+commands.set('playyt', { execute: async (sock, msg, args) => { const query = args.join(' '); if (!query) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan judul lagu!' }, { quoted: msg }); ytSearchAndDownload(query, sock, msg, 'audio'); }, category: 'public' });
+commands.set('yt', { execute: async (sock, msg, args) => { const url = args[0]; if (!url) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan link YouTube!' }, { quoted: msg }); ytSearchAndDownload(url, sock, msg, 'video'); }, category: 'public' });
+commands.set('ig', { execute: async (sock, msg, args) => { const url = args[0]; if (!url) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan link Instagram!' }, { quoted: msg }); igDownloader(url, sock, msg); }, category: 'public' });
+commands.set('tt', { execute: async (sock, msg, args) => { const url = args[0]; if (!url) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan link TikTok!' }, { quoted: msg }); ttDownloader(url, sock, msg); }, category: 'public' });
+
+// Admin
+commands.set('kick', { execute: async (sock, msg) => { const from = msg.key.remoteJid; const mentionedJid = msg.message.extendedTextMessage?.mentionedJid; if (!mentionedJid) return sock.sendMessage(from, { text: '❌ Tag member yang ingin dikeluarkan!' }, { quoted: msg }); await sock.groupParticipantsUpdate(from, mentionedJid, 'remove'); await sock.sendMessage(from, { text: `✅ Member berhasil dikeluarkan.` }, { quoted: msg }); }, category: 'admin' });
+commands.set('ban', { execute: async (sock, msg) => { const from = msg.key.remoteJid; const mentionedJid = msg.message.extendedTextMessage?.mentionedJid; if (!mentionedJid) return sock.sendMessage(from, { text: '❌ Tag member yang ingin dibanned!' }, { quoted: msg }); await sock.groupParticipantsUpdate(from, mentionedJid, 'remove'); await sock.sendMessage(from, { text: `✅ Member berhasil dibanned (dikeluarkan).` }, { quoted: msg }); }, category: 'admin' });
+commands.set('grup', { execute: async (sock, msg, args) => { const from = msg.key.remoteJid; const setting = args[0]; if (!setting || !['buka', 'tutup'].includes(setting)) return sock.sendMessage(from, { text: '❌ Pilih *buka* atau *tutup*!' }, { quoted: msg }); await sock.groupSettingUpdate(from, setting === 'buka' ? 'not_announcement' : 'announcement'); await sock.sendMessage(from, { text: `✅ Grup telah ${setting === 'buka' ? 'dibuka' : 'ditutup'}.` }); }, category: 'admin' });
+commands.set('totag', { execute: async (sock, msg, args) => { const from = msg.key.remoteJid; const text = args.join(' ') || 'Pesan dari admin'; const groupMetadata = await sock.groupMetadata(from); const participants = groupMetadata.participants.map(p => p.id); await sock.sendMessage(from, { text: text, mentions: participants }, { quoted: msg }); }, category: 'admin' });
+
+// Owner
+commands.set('npm', { execute: async (sock, msg, args) => { const packageName = args[0]; if (!packageName) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan nama package NPM!' }, { quoted: msg }); const pkg = await npmSearch(packageName); if (!pkg) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Package tidak ditemukan!' }, { quoted: msg }); const infoText = `📦 *Info Package NPM*\n\n📌 *Nama:* ${pkg.name}\n🏷️ *Versi:* ${pkg.version}\n📝 *Deskripsi:* ${pkg.description}\n👤 *Author:* ${pkg.author}`; sock.sendMessage(msg.key.remoteJid, { text: infoText }, { quoted: msg }); }, category: 'owner' });
+commands.set('gclone', { execute: async (sock, msg, args) => { const url = args[0]; if (!url) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Masukkan link repository GitHub!' }, { quoted: msg }); const repo = await githubInfo(url); if (!repo) return sock.sendMessage(msg.key.remoteJid, { text: '❌ Repository tidak ditemukan!' }, { quoted: msg }); const infoText = `🐙 *Info Repository GitHub*\n\n📌 *Nama:* ${repo.fullName}\n📝 *Deskripsi:* ${repo.description}\n⭐ *Stars:* ${repo.stars}\n🍴 *Forks:* ${repo.forks}\n💻 *Bahasa:* ${repo.language}\n🔗 *Link:* ${repo.url}`; sock.sendMessage(msg.key.remoteJid, { text: infoText }, { quoted: msg }); }, category: 'owner' });
+commands.set('apistatus', { execute: async (sock, msg) => { const apis = [{ name: 'NPM Registry', url: 'https://registry.npmjs.org/' }, { name: 'GitHub API', url: 'https://api.github.com/' }]; let statusText = '📊 *Status API Eksternal*\n\n'; const results = await Promise.allSettled(apis.map(api => axios.get(api.url, { timeout: 5000 }))); results.forEach((result, index) => { const api = apis[index]; statusText += result.status === 'fulfilled' ? `✅ ${api.name}: Online\n` : `❌ ${api.name}: Offline / Error\n`; }); sock.sendMessage(msg.key.remoteJid, { text: statusText }, { quoted: msg }); }, category: 'owner' });
+
+
+// --- FUNGSI UTAMA KONEKSI DAN HANDLER ---
+async function connectToWhatsApp() {
+    console.log('Memulai koneksi ke WhatsApp...');
+    const { state, saveCreds } = await useMultiFileAuthState('./sessions');
     const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({
-        version,
-        logger: { level: 'silent' },
-        printQRInTerminal: false,
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, { logger: { level: 'silent' } }),
-        },
-        browser: Browsers.ubuntu('Chrome'),
-        generateHighQualityLinkPreview: true,
-        syncFullHistory: false,
-        markOnlineOnConnect: true,
-        emitOwnEvents: true,
-        defaultQueryTimeoutMs: 0,
-    });
-    
-    // Generate QR Code
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('📱 Scan QR Code ini dengan WhatsApp:');
-            qrcode.generate(qr, { small: true });
-        }
-        
+    const sock = makeWASocket({ version, logger, printQRInTerminal: false, auth: state, browser: ['Windbi Bot', 'Chrome', '4.0.0'] });
+
+    sock.ev.on('connection.update', (update) => {
+        const { qr, connection, lastDisconnect } = update;
+        if (qr) { console.log('Scan QR Code ini untuk menghubungkan bot:'); qrcode.generate(qr, { small: true }); }
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log(`🔌 Koneksi terputus: ${lastDisconnect?.error?.message || 'unknown'}`);
-            
-            if (shouldReconnect) {
-                console.log('🔄 Mencoba reconnect dalam 5 detik...');
-                setTimeout(() => {
-                    startBot();
-                }, 5000);
-            }
+            console.log('Koneksi terputus, mencoba hubungkan kembali...', shouldReconnect);
+            if (shouldReconnect) connectToWhatsApp();
         } else if (connection === 'open') {
-            console.log('✅ Bot terhubung ke WhatsApp!');
-            console.log(`👤 User ID: ${sock.user.id}`);
-            console.log(`📞 Owner: ${ownerNumber}`);
-            
-            // Send message to owner when bot starts
-            const ownerJid = ownerNumber.includes('-') ? ownerNumber : `${ownerNumber}@s.whatsapp.net`;
-            try {
-                await sock.sendMessage(ownerJid, { 
-                    text: '🤖 *Windbi Bot Aktif!*\nBot sudah online dan siap digunakan!\n\nKetik *.menu* untuk melihat daftar command.'
-                });
-            } catch (error) {
-                console.log('⚠️ Tidak bisa mengirim ke owner:', error.message);
-            }
+            console.log('✅ Bot berhasil terhubung!');
         }
     });
-    
-    // Save credentials
     sock.ev.on('creds.update', saveCreds);
-    
-    // Handle messages
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        try {
-            const msg = messages[0];
-            if (!msg.message || msg.key.fromMe) return;
-            
-            const messageType = Object.keys(msg.message)[0];
-            let text = '';
-            
-            if (messageType === 'conversation') {
-                text = msg.message.conversation;
-            } else if (messageType === 'extendedTextMessage') {
-                text = msg.message.extendedTextMessage.text;
-            }
-            
-            if (!text) return;
-            
-            const textLower = text.toLowerCase();
-            const from = msg.key.remoteJid;
-            const sender = msg.key.participant || from;
-            const isGroup = from.endsWith('@g.us');
-            const isOwner = sender === `${ownerNumber}@s.whatsapp.net`;
-            const botJid = sock.user.id;
-            
-            // Get group metadata untuk cek admin
-            let isAdmin = false;
-            let isGroupAdmin = false;
-            if (isGroup) {
-                try {
-                    const metadata = await sock.groupMetadata(from);
-                    const participant = metadata.participants.find(p => p.id === sender);
-                    isGroupAdmin = participant?.admin === 'admin' || participant?.admin === 'superadmin';
-                    isAdmin = isOwner || isGroupAdmin;
-                } catch (error) {
-                    console.error('Error getting group metadata:', error);
-                }
-            } else {
-                isAdmin = isOwner;
-            }
-            
-            // Handle commands
-            if (textLower.startsWith(prefix) || msg.message[messageType]?.contextInfo?.mentionedJid?.includes(botJid)) {
-                const command = textLower.replace(prefix, '').split(' ')[0].trim();
-                const args = text.slice(text.indexOf(' ') + 1).trim();
-                
-                console.log(`📩 Command: ${command} from ${sender}`);
-                
-                // Menu utama dengan button
-                if (command === 'menu' || textLower.includes('menu')) {
-                    const menu = await createMenu();
-                    
-                    // Create buttons
-                    const buttons = [
-                        { buttonId: `${prefix}verify`, buttonText: { displayText: '✅ Verify' }, type: 1 },
-                        { buttonId: `${prefix}games`, buttonText: { displayText: '🎮 Games' }, type: 1 },
-                        { buttonId: `${prefix}download`, buttonText: { displayText: '📥 Download' }, type: 1 }
-                    ];
-                    
-                    await sock.sendMessage(from, { 
-                        text: menu,
-                        ...createButtons(buttons)
-                    });
-                }
-                
-                // Button handler
-                else if (command === 'verify') {
-                    await sock.sendMessage(from, { 
-                        text: '✅ *Verifikasi Berhasil!*\nAnda telah terverifikasi sebagai pengguna Windbi Bot.\n\nNama: ' + (isGroup ? 'Group User' : 'Private User') + '\nStatus: Verified ✅'
-                    });
-                }
-                else if (command === 'games') {
-                    const gamesMenu = `╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗚𝗔𝗠𝗘𝗦 ⧽━╾❐
-│ • ${prefix}tebakkata
-│ • ${prefix}mathquiz
-│ • ${prefix}tebakangka
-╰╼━━━━━━━━━━━━━━━━╾❏`;
-                    
-                    await sock.sendMessage(from, { text: gamesMenu });
-                }
-                else if (command === 'download') {
-                    const downloadMenu = `╭╼━⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽━╾❐
-│ • ${prefix}playyt <link> (Audio)
-│ • ${prefix}yt <url> (Video)
-│ • ${prefix}ig <url> (Instagram)
-│ • ${prefix}tt <url> (TikTok)
-╰╼━━━━━━━━━━━━━━━━╾❏`;
-                    
-                    await sock.sendMessage(from, { text: downloadMenu });
-                }
-                
-                // Public menu
-                else if (command === 'link') {
-                    await sock.sendMessage(from, { 
-                        text: '🔗 *Link Penting:*\n\n• GitHub Profile: https://github.com/humpreydev-hash\n• Repository Bot: https://github.com/humpreydev-hash/windbi-botm\n• Contact Owner: wa.me/6285929088764\n\n_Jangan lupa follow dan star repo! ⭐_'
-                    });
-                }
-                else if (command === 'gig') {
-                    await sock.sendMessage(from, { 
-                        text: '💼 *Gig Services by humpreyDev:*\n\n• WhatsApp Bot Development\n• Web Development (Node.js, React)\n• API Integration & Automation\n• Custom Scripts & Tools\n• Bug Fixing & Optimization\n\n💰 *Harga mulai dari 50k*\n📞 Hubungi: wa.me/6285929088764'
-                    });
-                }
-                else if (command === 'github') {
-                    await sock.sendMessage(from, { 
-                        text: '👨‍💻 *GitHub Repository:*\nhttps://github.com/humpreydev-hash/windbi-botm\n\n🌟 *Fitur:*\n- WhatsApp Bot Multi Device\n- Downloader YouTube/Instagram\n- Games & Fun Commands\n- Admin Tools\n- System Monitoring\n\n_Jangan lupa kasih star ⭐ dan fork!_\n_Support developer dengan follow ❤️_'
-                    });
-                }
-                
-                // Games menu
-                else if (command === 'tebakkata') {
-                    const questions = games.tebakkata.questions;
-                    const randomQ = questions[Math.floor(Math.random() * questions.length)];
-                    
-                    if (isGroup) {
-                        games.tebakkata.active.set(from, {
-                            question: randomQ.q,
-                            answer: randomQ.a,
-                            timestamp: Date.now()
-                        });
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: `🎮 *TEBAK KATA*\n\n📝 Pertanyaan: "${randomQ.q}"\n\n⚡ Jawab dengan: *${prefix}jawab [jawaban]*\n⏱️ Waktu: 60 detik`
-                    });
-                }
-                else if (command === 'mathquiz') {
-                    const num1 = Math.floor(Math.random() * 100) + 1;
-                    const num2 = Math.floor(Math.random() * 50) + 1;
-                    const operators = ['+', '-', '*'];
-                    const op = operators[Math.floor(Math.random() * operators.length)];
-                    let answer;
-                    
-                    switch(op) {
-                        case '+': answer = num1 + num2; break;
-                        case '-': answer = num1 - num2; break;
-                        case '*': answer = num1 * num2; break;
-                    }
-                    
-                    if (isGroup) {
-                        games.mathquiz.active.set(from, {
-                            question: `${num1} ${op} ${num2}`,
-                            answer: answer,
-                            timestamp: Date.now()
-                        });
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: `🧮 *MATH QUIZ*\n\n📊 Soal: ${num1} ${op} ${num2} = ?\n\n⚡ Jawab dengan: *${prefix}jawab [angka]*\n⏱️ Waktu: 30 detik`
-                    });
-                }
-                else if (command === 'tebakangka') {
-                    const number = Math.floor(Math.random() * 100) + 1;
-                    
-                    if (isGroup) {
-                        games.tebakangka.active.set(from, {
-                            answer: number,
-                            timestamp: Date.now()
-                        });
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: `🔢 *TEBAK ANGKA*\n\n🎯 Saya memikirkan angka antara 1-100\n\n⚡ Tebak dengan: *${prefix}jawab [angka]*\n💡 Tips: Saya akan kasih petunjuk!\n⏱️ Waktu: Unlimited`
-                    });
-                }
-                else if (command.startsWith('jawab')) {
-                    const answer = args.toLowerCase();
-                    
-                    if (games.tebakkata.active.has(from)) {
-                        const game = games.tebakkata.active.get(from);
-                        if (Date.now() - game.timestamp > 60000) {
-                            await sock.sendMessage(from, { 
-                                text: `⏰ *WAKTU HABIS!*\nJawaban: "${game.answer}"\n\nGunakan *${prefix}tebakkata* untuk main lagi!`
-                            });
-                            games.tebakkata.active.delete(from);
-                        } else if (answer === game.answer) {
-                            await sock.sendMessage(from, { 
-                                text: `✅ *BENAR!* 🎉\nJawaban "${game.answer}" tepat!\n\n🏆 Kamu hebat!`
-                            });
-                            games.tebakkata.active.delete(from);
-                        } else {
-                            await sock.sendMessage(from, { 
-                                text: `❌ *SALAH!*\nCoba lagi atau gunakan *${prefix}tebakkata* untuk soal baru.`
-                            });
-                        }
-                    }
-                    else if (games.mathquiz.active.has(from)) {
-                        const game = games.mathquiz.active.get(from);
-                        if (Date.now() - game.timestamp > 30000) {
-                            await sock.sendMessage(from, { 
-                                text: `⏰ *WAKTU HABIS!*\nJawaban: ${game.answer}\n\nGunakan *${prefix}mathquiz* untuk soal baru!`
-                            });
-                            games.mathquiz.active.delete(from);
-                        } else if (parseInt(answer) === game.answer) {
-                            await sock.sendMessage(from, { 
-                                text: `✅ *BENAR!* 🎉\n${game.question} = ${game.answer}\n\n🧠 Otak encer!`
-                            });
-                            games.mathquiz.active.delete(from);
-                        } else {
-                            await sock.sendMessage(from, { 
-                                text: `❌ *SALAH!*\nJawabanmu: ${answer}\nCoba lagi!`
-                            });
-                        }
-                    }
-                    else if (games.tebakangka.active.has(from)) {
-                        const game = games.tebakangka.active.get(from);
-                        const guess = parseInt(answer);
-                        
-                        if (isNaN(guess)) {
-                            await sock.sendMessage(from, { 
-                                text: '❌ Masukkan angka yang valid (1-100)!'
-                            });
-                        } else if (guess === game.answer) {
-                            await sock.sendMessage(from, { 
-                                text: `✅ *BENAR!* 🎉\nAngka ${game.answer} tepat!\n\n🎯 Tebakan mantap!`
-                            });
-                            games.tebakangka.active.delete(from);
-                        } else if (guess < game.answer) {
-                            await sock.sendMessage(from, { 
-                                text: '📈 *TERLALU RENDAH!*\nAngka saya lebih besar. Coba lagi!'
-                            });
-                        } else {
-                            await sock.sendMessage(from, { 
-                                text: '📉 *TERLALU TINGGI!*\nAngka saya lebih kecil. Coba lagi!'
-                            });
-                        }
-                    } else {
-                        await sock.sendMessage(from, { 
-                            text: `❌ *Tidak ada game aktif!*\nMulai game dengan:\n• ${prefix}tebakkata\n• ${prefix}mathquiz\n• ${prefix}tebakangka`
-                        });
-                    }
-                }
-                
-                // Fun menu
-                else if (command.startsWith('cek')) {
-                    const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid?.[0] || sender;
-                    const username = mentioned.split('@')[0];
-                    const percentage = checkLuck();
-                    
-                    const funMessages = {
-                        cekiman: {
-                            title: '🕌 CEK IMAN',
-                            message: `@${username} memiliki tingkat keimanan: ${percentage}`,
-                            comment: percentage.includes('🎉') ? 'Masha Allah! 💖 Tingkatkan terus!' : 
-                                    percentage.includes('😊') ? 'Alhamdulillah, cukup baik!' :
-                                    percentage.includes('😐') ? 'Masih bisa ditingkatkan!' :
-                                    'Perbanyak ibadah ya! 📿'
-                        },
-                        cekfemboy: {
-                            title: '🌸 CEK FEMBOY',
-                            message: `@${username} memiliki kadar femboy: ${percentage}`,
-                            comment: percentage.includes('🎉') ? 'UwU sangat femboy! 🌸' : 
-                                    percentage.includes('😊') ? 'Ada sedikit femboy dalam dirimu~' :
-                                    'Masih normal kok! 😊'
-                        },
-                        cekfurry: {
-                            title: '🐾 CEK FURRY',
-                            message: `@${username} memiliki kadar furry: ${percentage}`,
-                            comment: percentage.includes('🎉') ? 'Rawr! 🦁 Furry level maksimal!' : 
-                                    percentage.includes('😊') ? 'Ada jiwa furry dalam dirimu~' :
-                                    'Normal aja kok! 😅'
-                        },
-                        cekjamet: {
-                            title: '🚬 CEK JAMET',
-                            message: `@${username} memiliki kadar jamet: ${percentage}`,
-                            comment: percentage.includes('🎉') ? 'Woy! 🏍️ Level jamet maksimal!' : 
-                                    percentage.includes('😊') ? 'Ada sedikit jiwa jamet~' :
-                                    'Alhamdulillah normal! 😇'
-                        }
-                    };
-                    
-                    if (funMessages[command]) {
-                        const { title, message, comment } = funMessages[command];
-                        await sock.sendMessage(from, { 
-                            text: `${title}\n\n${message}\n\n💬 ${comment}`,
-                            mentions: [mentioned]
-                        });
-                    }
-                }
-                
-                // Downloader menu
-                else if (command.startsWith('playyt')) {
-                    const url = args;
-                    if (!url) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Format salah!*\nGunakan: *.playyt <link YouTube>*\n\nContoh: .playyt https://youtu.be/example'
-                        });
-                        return;
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: '⏳ *Mendownload audio YouTube...*\nMohon tunggu beberapa saat...'
-                    });
-                    
-                    const audio = await downloadYouTube(url, 'audio');
-                    if (audio) {
-                        await sock.sendMessage(from, { 
-                            audio: { url: audio.url },
-                            mimetype: 'audio/mpeg',
-                            fileName: `${audio.title.substring(0, 50)}.mp3`,
-                            caption: `🎵 *${audio.title}*\n⏱️ Durasi: ${Math.floor(audio.duration / 60)}:${(audio.duration % 60).toString().padStart(2, '0')}\n\n_Downloaded by Windbi Bot_`
-                        });
-                    } else {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Gagal mendownload audio!*\nPastikan link YouTube valid dan video tidak di-private.'
-                        });
-                    }
-                }
-                else if (command === 'yt') {
-                    const url = args;
-                    if (!url) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Format salah!*\nGunakan: *.yt <link YouTube>*\n\nContoh: .yt https://youtu.be/example'
-                        });
-                        return;
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: '⏳ *Mendownload video YouTube...*\nProses ini mungkin memakan waktu...'
-                    });
-                    
-                    const video = await downloadYouTube(url, 'video');
-                    if (video) {
-                        await sock.sendMessage(from, { 
-                            video: { url: video.url },
-                            caption: `📹 *${video.title}*\n⏱️ Durasi: ${Math.floor(video.duration / 60)}:${(video.duration % 60).toString().padStart(2, '0')}\n\n_Downloaded by Windbi Bot_`
-                        });
-                    } else {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Gagal mendownload video!*\nPastikan link YouTube valid dan video tidak di-private.'
-                        });
-                    }
-                }
-                else if (command === 'ig' || command === 'tt') {
-                    const url = args;
-                    if (!url) {
-                        await sock.sendMessage(from, { 
-                            text: `❌ *Format salah!*\nGunakan: *.${command} <link>*\n\nContoh: .${command} https://instagram.com/p/example`
-                        });
-                        return;
-                    }
-                    
-                    const platform = command === 'ig' ? 'Instagram' : 'TikTok';
-                    
-                    await sock.sendMessage(from, { 
-                        text: `⚠️ *Fitur ${platform} Downloader sedang dalam pengembangan.*\n\nUntuk saat ini, gunakan website downloader:\n\n• ${platform}: https://snapinsta.app\n• TikTok: https://snaptik.app\n\nAtau tunggu update berikutnya!`
-                    });
-                }
-                
-                // Admin menu (hanya admin/owner)
-                else if (command.startsWith('kick') && isAdmin) {
-                    if (!isGroup) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Command ini hanya untuk grup!*'
-                        });
-                        return;
-                    }
-                    
-                    const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid;
-                    if (!mentioned || mentioned.length === 0) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Tag member yang akan di-kick!*\n\nContoh: .kick @member'
-                        });
-                        return;
-                    }
-                    
-                    for (const user of mentioned) {
-                        try {
-                            if (user === sock.user.id) {
-                                await sock.sendMessage(from, { 
-                                    text: '🤖 Saya tidak bisa kick diri sendiri!'
-                                });
-                                continue;
-                            }
-                            
-                            await sock.groupParticipantsUpdate(from, [user], 'remove');
-                            await sock.sendMessage(from, { 
-                                text: `✅ @${user.split('@')[0]} telah di-kick dari grup.`,
-                                mentions: [user]
-                            });
-                        } catch (error) {
-                            console.error('Error kicking user:', error);
-                            await sock.sendMessage(from, { 
-                                text: `❌ Gagal kick @${user.split('@')[0]}`
-                            });
-                        }
-                    }
-                }
-                else if (command.startsWith('ban') && isAdmin) {
-                    await sock.sendMessage(from, { 
-                        text: '⚠️ *Fitur ban sedang dalam pengembangan.*\n\nGunakan .kick untuk sekarang.'
-                    });
-                }
-                else if (command === 'grup') {
-                    if (!isAdmin || !isGroup) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Hanya admin grup yang bisa menggunakan command ini!*'
-                        });
-                        return;
-                    }
-                    
-                    const action = args.toLowerCase();
-                    if (action === 'buka') {
-                        await sock.groupSettingUpdate(from, 'not_announcement');
-                        await sock.sendMessage(from, { 
-                            text: '✅ *Grup dibuka!*\nSekarang semua member bisa mengirim pesan.'
-                        });
-                    } else if (action === 'tutup') {
-                        await sock.groupSettingUpdate(from, 'announcement');
-                        await sock.sendMessage(from, { 
-                            text: '🔒 *Grup ditutup!*\nHanya admin yang bisa mengirim pesan.'
-                        });
-                    } else {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Format salah!*\nGunakan: *.grup buka* atau *.grup tutup*'
-                        });
-                    }
-                }
-                else if (command === 'totag' && isAdmin) {
-                    if (!isGroup) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Command ini hanya untuk grup!*'
-                        });
-                        return;
-                    }
-                    
-                    try {
-                        const metadata = await sock.groupMetadata(from);
-                        let mentionText = '📢 *TAG ALL MEMBERS*\n\n';
-                        const mentions = [];
-                        
-                        let count = 1;
-                        for (const participant of metadata.participants) {
-                            if (participant.id !== sock.user.id) {
-                                mentionText += `${count}. @${participant.id.split('@')[0]}\n`;
-                                mentions.push(participant.id);
-                                count++;
-                            }
-                        }
-                        
-                        mentionText += `\nTotal: ${metadata.participants.length - 1} member\n_Ditag oleh admin_`;
-                        
-                        await sock.sendMessage(from, { 
-                            text: mentionText,
-                            mentions: mentions
-                        });
-                    } catch (error) {
-                        console.error('Error tagging members:', error);
-                        await sock.sendMessage(from, { 
-                            text: '❌ Gagal tag semua member!'
-                        });
-                    }
-                }
-                
-                // Owner menu (hanya owner)
-                else if (command === 'npm' && isOwner) {
-                    const lib = args;
-                    if (!lib) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Format salah!*\nGunakan: *.npm <nama library>*\n\nContoh: .npm axios'
-                        });
-                        return;
-                    }
-                    
-                    try {
-                        const response = await axios.get(`https://registry.npmjs.org/${lib}`);
-                        const pkg = response.data;
-                        
-                        await sock.sendMessage(from, { 
-                            text: `📦 *NPM Package: ${pkg.name}*\n\n📖 Versi: ${pkg['dist-tags'].latest}\n📝 Deskripsi: ${pkg.description || 'Tidak ada deskripsi'}\n📅 Update: ${pkg.time?.modified || 'Unknown'}\n🏠 Homepage: ${pkg.homepage || 'Tidak ada'}\n\n🔗 https://www.npmjs.com/package/${pkg.name}`
-                        });
-                    } catch (error) {
-                        await sock.sendMessage(from, { 
-                            text: `❌ *Package "${lib}" tidak ditemukan!*\nCek penulisan atau library tidak terdaftar di NPM.`
-                        });
-                    }
-                }
-                else if (command === 'gclone' && isOwner) {
-                    const url = args;
-                    if (!url) {
-                        await sock.sendMessage(from, { 
-                            text: '❌ *Format salah!*\nGunakan: *.gclone <link GitHub>*\n\nContoh: .gclone https://github.com/humpreydev-hash/windbi-botm'
-                        });
-                        return;
-                    }
-                    
-                    await sock.sendMessage(from, { 
-                        text: `⚠️ *Fitur git clone hanya tersedia di VPS/Local.*\n\nUntuk clone di terminal:\n\`\`\`bash\ngit clone ${url}\n\`\`\`\n\nAtau download manual dari GitHub.`
-                    });
-                }
-                else if (command === 'apistatus' && isOwner) {
-                    const apiStatus = await checkAPIs();
-                    await sock.sendMessage(from, { 
-                        text: apiStatus
-                    });
-                }
-                else if (command === 'restart' && isOwner) {
-                    await sock.sendMessage(from, { 
-                        text: '🔄 *Restarting bot...*\nBot akan restart dalam 3 detik...'
-                    });
-                    setTimeout(() => {
-                        console.log('Restarting bot by owner command...');
-                        process.exit(0);
-                    }, 3000);
-                }
-                
-                // Jika command tidak dikenali
-                else if (textLower.startsWith(prefix)) {
-                    await sock.sendMessage(from, { 
-                        text: `❌ *Command "${command}" tidak dikenali!*\n\nKetik *${prefix}menu* untuk melihat daftar command.\nAtau tag bot untuk bantuan.`
-                    });
-                }
-            }
-        } catch (error) {
-            console.error('Error handling message:', error);
-        }
+
+    sock.ev.on('messages.upsert', async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') return;
+        
+        const from = msg.key.remoteJid; const isGroup = from.endsWith('@g.us'); const sender = msg.key.participant || from;
+        const body = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        const args = body.trim().split(/ +/).slice(1);
+        const commandText = body.trim().toLowerCase().split(' ')[0];
+        
+        if (!commandText.startsWith(prefix)) return;
+        const commandName = commandText.replace(prefix, '');
+        const command = commands.get(commandName);
+
+        if (!command) return sock.sendMessage(from, { text: `❌ Command tidak dikenali! Ketik *${prefix}menu* untuk melihat daftar.` }, { quoted: msg });
+
+        const isOwner = sender === ownerNumber;
+        let isAdmin = false;
+        if (isGroup) { try { const groupMetadata = await sock.groupMetadata(from); isAdmin = groupMetadata.participants.some(p => p.id === sender && (p.admin === 'admin' || p.admin === 'superadmin')); } catch (e) { console.error('Gagal mendapatkan metadata grup:', e); } }
+
+        if (command.category === 'owner' && !isOwner) return sock.sendMessage(from, { text: '❌ Perintah ini hanya untuk Owner!' }, { quoted: msg });
+        if (command.category === 'admin' && !isOwner && !isAdmin) return sock.sendMessage(from, { text: '❌ Perintah ini hanya untuk Admin Grup!' }, { quoted: msg });
+        
+        try { await command.execute(sock, msg, args); }
+        catch (error) { console.error(`Error executing command ${commandName}:`, error); sock.sendMessage(from, { text: `❌ Terjadi kesalahan saat menjalankan perintah ${commandName}` }, { quoted: msg }); }
     });
     
-    // Auto-reply jika bot di-mention
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        try {
-            const msg = messages[0];
-            if (!msg.message || msg.key.fromMe) return;
-            
-            const messageType = Object.keys(msg.message)[0];
-            const from = msg.key.remoteJid;
-            const botJid = sock.user.id;
-            
-            // Cek jika bot di-mention
-            const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid?.includes(botJid);
-            
-            if (mentioned && !msg.key.fromMe) {
-                const menu = await createMenu();
-                await sock.sendMessage(from, { 
-                    text: `👋 *Hai! Saya Windbi Bot! 🤖*\n\nBot WhatsApp multifungsi oleh *humpreyDev*\n\n${menu}\n\n⚡ Tag saya atau ketik *${prefix}menu* untuk memulai!`
-                });
-            }
-        } catch (error) {
-            console.error('Error handling mention:', error);
-        }
-    });
-    
-    // Periodic status update
-    setInterval(async () => {
-        try {
-            const stats = await getSystemStats();
-            console.log(`📊 Status: Online | Uptime: ${stats.uptime} | RAM: ${stats.ram.split(' / ')[0]}`);
-        } catch (error) {
-            console.error('Error updating status:', error);
-        }
-    }, 60000); // Every minute
+    return sock;
 }
 
-// Start bot
-console.log('╔═══════════════════════════════════════╗');
-console.log('║         🚀 WINDIBI BOT v2.0           ║');
-console.log('║       WhatsApp Bot by humpreyDev      ║');
-console.log('╚═══════════════════════════════════════╝');
-console.log(`📅 ${moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss')}`);
-console.log(`🔧 Node.js ${process.version}`);
-console.log(`📱 Owner: ${ownerNumber}`);
-console.log(`🏠 Directory: ${process.cwd()}`);
-console.log('═════════════════════════════════════════');
-
-// Handle uncaught errors
-process.on('uncaughtException', (error) => {
-    console.error('⚠️ Uncaught Exception:', error.message);
-    console.error(error.stack);
-});
-
-process.on('unhandledRejection', (error) => {
-    console.error('⚠️ Unhandled Rejection:', error.message);
-});
-
-// Start the bot
-startBot().catch(error => {
-    console.error('❌ Failed to start bot:', error);
-    console.error(error.stack);
-    console.log('🔄 Restarting in 10 seconds...');
-    setTimeout(() => {
-        process.exit(1);
-    }, 10000);
-});
-
-// Handle process termination
-process.on('SIGINT', () => {
-    console.log('\n🛑 Bot dimatikan oleh user...');
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    console.log('\n🛑 Bot dimatikan oleh sistem...');
-    process.exit(0);
-});
+// Jalankan koneksi
+connectToWhatsApp().catch(err => console.error("Error saat memulai koneksi:", err));

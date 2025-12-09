@@ -1,34 +1,29 @@
 {
-  "name": "windbi-bot",
+  "name": "windbi-bot-advanced",
   "version": "2.0.0",
-  "description": "WhatsApp Bot by humpreyDev",
+  "description": "Advanced WhatsApp Bot by humpreyDev",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"No tests specified\" && exit 0"
-  },
-  "dependencies": {
-    "@whiskeysockets/baileys": "^6.5.0",
-    "axios": "^1.6.0",
-    "qrcode-terminal": "^0.12.0",
-    "ytdl-core": "^4.11.5",
-    "yt-search": "^2.10.4",
-    "moment-timezone": "^0.5.45"
-  },
-  "engines": {
-    "node": ">=20.0.0"
+    "dev": "nodemon index.js"
   },
   "author": "humpreyDev",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/humpreydev-hash/windbi-botm"
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.6.0",
+    "@hapi/boom": "^10.0.1",
+    "axios": "^1.6.8",
+    "file-type": "^19.0.0",
+    "instagram-url-direct": "^1.0.13",
+    "node-os-utils": "^1.3.7",
+    "pino": "^8.19.0",
+    "qrcode-terminal": "^0.12.0",
+    "tiktok-scraper": "^1.4.36",
+    "yt-search": "^2.10.4",
+    "ytdl-core": "^4.11.5"
   },
-  "keywords": [
-    "whatsapp-bot",
-    "baileys",
-    "nodejs",
-    "windbi-bot"
-  ]
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
 }
