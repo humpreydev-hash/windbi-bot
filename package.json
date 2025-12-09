@@ -1,30 +1,24 @@
 {
-  "name": "whatsapp-bot-railway",
+  "name": "windbi-bot",
   "version": "1.0.0",
-  "description": "Bot WhatsApp untuk Railway",
+  "description": "WhatsApp Bot by humpreyDev",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
-  "keywords": [
-    "bot",
-    "whatsapp",
-    "baileys"
-  ],
-  "author": "humpreyDev",
-  "license": "ISC",
   "dependencies": {
-    "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.6.0",
-    "archiver": "^6.0.1",
-    "axios": "^1.7.7",
-    "fluent-ffmpeg": "^2.1.2",
-    "node-fetch": "^3.3.2",
-    "os-utils": "^0.0.14",
-    "instagram-scraper": "^1.0.0",
+    "@whiskeysockets/baileys": "^6.5.0",
+    "axios": "^1.6.0",
     "qrcode-terminal": "^0.12.0",
-    "sqlite3": "^5.1.7",
-    "ytdl-core": "^4.11.5"
-  }
+    "os-utils": "^0.0.14",
+    "ytdl-core": "^4.11.5",
+    "yt-search": "^2.10.4",
+    "moment-timezone": "^0.5.45"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "humpreyDev",
+  "license": "MIT"
 }

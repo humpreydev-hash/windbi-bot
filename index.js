@@ -1,25 +1,22 @@
-import makeWASocket, { 
+const { default: makeWASocket, 
     useMultiFileAuthState, 
     DisconnectReason,
     Browsers,
     makeInMemoryStore,
-    fetchLatestBaileysVersion,
-    proto 
-} from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import qrcode from 'qrcode-terminal';
-import fs from 'fs';
-import os from 'os';
-import pkg from 'systeminformation';
-const { cpu, mem, fsSize } = pkg;
-import axios from 'axios';
-import ytdl from 'ytdl-core';
-import yts from 'yt-search';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import moment from 'moment-timezone';
+    fetchLatestBaileysVersion 
+} = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const os = require('os');
+const axios = require('axios');
+const ytdl = require('ytdl-core');
+const yts = require('yt-search');
+const { exec } = require('child_process');
+const util = require('util');
+const moment = require('moment-timezone');
 
-const execAsync = promisify(exec);
+const execAsync = util.promisify(exec);
 let store = makeInMemoryStore({ logger: { level: 'silent' } });
 
 // Owner number
@@ -45,28 +42,39 @@ const games = {
     }
 };
 
-// Fungsi untuk mendapatkan statistik sistem
+// Fungsi untuk mendapatkan statistik sistem (versi sederhana)
 async function getSystemStats() {
     try {
-        const cpuInfo = await cpu();
-        const memory = await mem();
-        const disk = await fsSize();
+        const cpus = os.cpus();
+        const totalMem = os.totalmem();
+        const freeMem = os.freemem();
+        const usedMem = totalMem - freeMem;
         
-        const totalDisk = disk.reduce((acc, d) => acc + d.size, 0);
-        const usedDisk = disk.reduce((acc, d) => acc + d.used, 0);
-        const freeDisk = totalDisk - usedDisk;
+        // Cek disk space menggunakan command
+        let diskInfo = 'Tidak tersedia';
+        try {
+            if (process.platform === 'win32') {
+                const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption');
+                diskInfo = stdout.split('\n')[1] || 'Windows disk';
+            } else {
+                const { stdout } = await execAsync('df -h /');
+                diskInfo = stdout.split('\n')[1] || 'Unix disk';
+            }
+        } catch (diskError) {
+            diskInfo = 'Error getting disk info';
+        }
         
         return {
-            cpu: `${cpuInfo.speed}GHz ${cpuInfo.cores} cores`,
-            ram: `${(memory.used / 1024 / 1024 / 1024).toFixed(2)}GB / ${(memory.total / 1024 / 1024 / 1024).toFixed(2)}GB`,
-            disk: `${(usedDisk / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalDisk / 1024 / 1024 / 1024).toFixed(2)}GB`
+            cpu: `${cpus[0].model} ${cpus.length} cores`,
+            ram: `${(usedMem / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(2)}GB`,
+            disk: diskInfo.substring(0, 30) + '...'
         };
     } catch (error) {
         console.error('Error getting system stats:', error);
         return {
-            cpu: 'Error',
-            ram: 'Error',
-            disk: 'Error'
+            cpu: os.cpus()[0]?.model || 'Unknown',
+            ram: 'Unknown',
+            disk: 'Unknown'
         };
     }
 }
@@ -262,10 +270,6 @@ async function startBot() {
         const isOwner = sender === `${ownerNumber}@s.whatsapp.net`;
         const botJid = sock.user.id;
         
-        // Cek apakah message adalah mention bot
-        const mentioned = msg.message[messageType]?.contextInfo?.mentionedJid?.includes(botJid);
-        const quoted = msg.message[messageType]?.contextInfo?.quotedMessage;
-        
         // Get group metadata untuk cek admin
         let isAdmin = false;
         let isGroupAdmin = false;
@@ -283,14 +287,14 @@ async function startBot() {
         }
         
         // Handle commands
-        if (text.startsWith(prefix) || mentioned) {
+        if (text.startsWith(prefix)) {
             const command = text.replace(prefix, '').split(' ')[0].trim();
             const args = text.slice(text.indexOf(' ') + 1).trim();
             
             console.log(`Command: ${command} from ${sender}`);
             
             // Menu utama
-            if (command === 'menu' || mentioned) {
+            if (command === 'menu') {
                 const menu = await createMenu();
                 await sock.sendMessage(from, { text: menu });
             }
@@ -686,7 +690,20 @@ console.log('📱 Owner: ' + ownerNumber);
 console.log('🔧 Node.js ' + process.version);
 console.log('⏰ ' + moment().tz('Asia/Jakarta').format('DD/MM/YYYY HH:mm:ss'));
 
-startBot().catch(console.error);
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (error) => {
+    console.error('Unhandled Rejection:', error);
+});
+
+// Start the bot
+startBot().catch(error => {
+    console.error('Failed to start bot:', error);
+    process.exit(1);
+});
 
 // Handle process termination
 process.on('SIGINT', () => {
