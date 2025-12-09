@@ -1,22 +1,17 @@
 {
-  "name": "windbi-bot",
-  "version": "3.0.0",
-  "description": "WhatsApp Bot by humpreyDev",
+  "name": "bot-wa-list-menu",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp dengan banyak fitur dan menu list button",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
+  "author": "Nama Kamu",
+  "license": "ISC",
   "dependencies": {
-    "@adiwajshing/baileys": "^6.6.1",
-    "axios": "^1.6.0",
-    "qrcode-terminal": "^0.12.0",
-    "moment-timezone": "^0.5.45",
-    "os-utils": "^0.0.14"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "author": "humpreyDev",
-  "license": "MIT"
+    "axios": "^1.6.2",
+    "mime-types": "^2.1.35",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.23.0"
+  }
 }
