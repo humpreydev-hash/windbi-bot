@@ -1,5 +1,5 @@
 const makeWASocket = require('@whiskeysockets/baileys').default;
-const { DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const P = require('pino');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
@@ -22,7 +22,11 @@ async function startBot() {
   // Menggunakan auth state untuk multi-device
   const { state, saveCreds } = await useMultiFileAuthState(`${SESSION_DIR}/auth_info_baileys`);
   
+  const { version, isLatest } = await fetchLatestBaileysVersion();
+  console.log(`Using Baileys v${version}${isLatest ? ' (latest)' : ''}`);
+  
   const sock = makeWASocket({
+    version,
     printQRInTerminal: true,
     logger: P({ level: 'silent' }),
     auth: state
