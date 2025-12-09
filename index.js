@@ -1,7 +1,7 @@
 // C:\$dirBotWa\Bot\index.js
 
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
+import { Boom } from '@hapi/boom'; // Impor Boom tetapi tidak digunakan di sintaks JS
 import qrcode from 'qrcode-terminal';
 import fs from 'fs-extra';
 import Pino from 'pino';
@@ -312,7 +312,8 @@ async function connectToWhatsApp() {
         const { qr, connection, lastDisconnect } = update;
         if (qr) { console.log('Scan QR Code ini untuk menghubungkan bot:'); qrcode.generate(qr, { small: true }); }
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            // --- BARIS YANG TELAH DIPERBAIKI ---
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Koneksi terputus, mencoba hubungkan kembali...', shouldReconnect);
             if (shouldReconnect) connectToWhatsApp();
         } else if (connection === 'open') {
