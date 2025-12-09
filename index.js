@@ -1,20 +1,22 @@
-const { default: makeWASocket, 
+// index.js
+
+import makeWASocket, { 
     useMultiFileAuthState, 
     DisconnectReason,
     Browsers,
     makeInMemoryStore,
     fetchLatestBaileysVersion 
-} = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const os = require('os');
-const axios = require('axios');
-const ytdl = require('ytdl-core');
-const yts = require('yt-search');
-const { exec } = require('child_process');
-const util = require('util');
-const moment = require('moment-timezone');
+} from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import qrcode from 'qrcode-terminal';
+import fs from 'fs';
+import os from 'os';
+import axios from 'axios';
+import ytdl from 'ytdl-core';
+import yts from 'yt-search';
+import { exec } from 'child_process';
+import util from 'util';
+import moment from 'moment-timezone';
 
 const execAsync = util.promisify(exec);
 let store = makeInMemoryStore({ logger: { level: 'silent' } });
@@ -53,21 +55,33 @@ async function getSystemStats() {
         // Cek disk space menggunakan command
         let diskInfo = 'Tidak tersedia';
         try {
-            if (process.platform === 'win32') {
-                const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption');
-                diskInfo = stdout.split('\n')[1] || 'Windows disk';
-            } else {
+            // Railway menggunakan Linux, jadi kita prioritaskan command df
+            if (process.platform !== 'win32') {
                 const { stdout } = await execAsync('df -h /');
-                diskInfo = stdout.split('\n')[1] || 'Unix disk';
+                const lines = stdout.trim().split('\n');
+                if (lines.length > 1) {
+                    const parts = lines[1].split(/\s+/);
+                    diskInfo = `${parts[2]} / ${parts[1]} (${parts[4]})`;
+                }
+            } else {
+                const { stdout } = await execAsync('wmic logicaldisk get size,freespace,caption');
+                const lines = stdout.trim().split('\n');
+                if (lines.length > 1) {
+                    const parts = lines[1].trim().split(/\s+/);
+                    const free = (parseInt(parts[1]) / 1024 / 1024 / 1024).toFixed(2);
+                    const size = (parseInt(parts[2]) / 1024 / 1024 / 1024).toFixed(2);
+                    diskInfo = `${(size - free).toFixed(2)}GB / ${size}GB`;
+                }
             }
         } catch (diskError) {
+            console.error('Error getting disk info:', diskError);
             diskInfo = 'Error getting disk info';
         }
         
         return {
             cpu: `${cpus[0].model} ${cpus.length} cores`,
             ram: `${(usedMem / 1024 / 1024 / 1024).toFixed(2)}GB / ${(totalMem / 1024 / 1024 / 1024).toFixed(2)}GB`,
-            disk: diskInfo.substring(0, 30) + '...'
+            disk: diskInfo
         };
     } catch (error) {
         console.error('Error getting system stats:', error);
@@ -122,7 +136,7 @@ async function createMenu() {
 ╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽━╾❐
-│ • ${prefix}playyt <link>
+│ • ${prefix}playyt <query>
 │ • ${prefix}yt <url>
 │ • ${prefix}ig <url>
 ╰╼━━━━━━━━━━━━━━━━╾❏
@@ -177,7 +191,7 @@ async function downloadYouTube(url, type = 'audio') {
     try {
         const info = await ytdl.getInfo(url);
         const format = ytdl.chooseFormat(info.formats, { 
-            quality: type === 'audio' ? 'highestaudio' : 'highest'
+            quality: type === 'audio' ? 'highestaudio' : 'highestvideo'
         });
         
         return {
@@ -211,7 +225,7 @@ function checkLuck(percentage = 100) {
 
 // Main function
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    const { state, saveCreds } = await useMultiFileAuthState('./auth_info_baileys');
     
     const { version } = await fetchLatestBaileysVersion();
     const sock = makeWASocket({
@@ -234,6 +248,7 @@ async function startBot() {
         }
         
         if (connection === 'close') {
+            // Perbaikan sintaks di sini
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) {
                 console.log('Koneksi terputus, mencoba reconnect...');
@@ -307,7 +322,7 @@ async function startBot() {
             }
             else if (command === 'link') {
                 await sock.sendMessage(from, { 
-                    text: '🔗 *Link Penting:*\n• GitHub: https://github.com/humpreydev-hash\n• Repository: https://github.com/humpreydev-hash/windbi-botm'
+                    text: '🔗 *Link Penting:*\n• GitHub: https://github.com/humpreydev-hash\n• Repository: https://github.com/humpreydev-hash/windbi-bot'
                 });
             }
             else if (command === 'gig') {
@@ -317,7 +332,7 @@ async function startBot() {
             }
             else if (command === 'github') {
                 await sock.sendMessage(from, { 
-                    text: '👨‍💻 *GitHub Repository:*\nhttps://github.com/humpreydev-hash/windbi-botm\n\nJangan lupa kasih star ⭐ ya!'
+                    text: '👨‍💻 *GitHub Repository:*\nhttps://github.com/humpreydev-hash/windbi-bot\n\nJangan lupa kasih star ⭐ ya!'
                 });
             }
             
@@ -461,28 +476,39 @@ async function startBot() {
             
             // Downloader menu
             else if (command.startsWith('playyt')) {
-                const url = args;
-                if (!url) {
+                const query = args;
+                if (!query) {
                     await sock.sendMessage(from, { 
-                        text: '❌ *Format salah!*\nGunakan: *.playyt <link YouTube>*'
+                        text: '❌ *Format salah!*\nGunakan: *.playyt <judul lagu>*'
                     });
                     return;
                 }
                 
                 await sock.sendMessage(from, { 
-                    text: '⏳ *Mendownload audio YouTube...*'
+                    text: '⏳ *Mencari lagu di YouTube...*'
                 });
                 
-                const audio = await downloadYouTube(url, 'audio');
-                if (audio) {
+                const searchResults = await searchYouTube(query);
+                if (searchResults.length > 0) {
+                    const video = searchResults[0];
                     await sock.sendMessage(from, { 
-                        audio: { url: audio.url },
-                        mimetype: 'audio/mpeg',
-                        fileName: `${audio.title}.mp3`
+                        text: '⏳ *Mendownload audio YouTube...*'
                     });
+                    const audio = await downloadYouTube(video.url, 'audio');
+                    if (audio) {
+                        await sock.sendMessage(from, { 
+                            audio: { url: audio.url },
+                            mimetype: 'audio/mpeg',
+                            fileName: `${audio.title}.mp3`
+                        });
+                    } else {
+                        await sock.sendMessage(from, { 
+                            text: '❌ *Gagal mendownload audio!*'
+                        });
+                    }
                 } else {
                     await sock.sendMessage(from, { 
-                        text: '❌ *Gagal mendownload audio!*'
+                        text: '❌ *Lagu tidak ditemukan!*'
                     });
                 }
             }
