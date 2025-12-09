@@ -21,13 +21,15 @@ RUN apt-get update && apt-get install -yq \
     chromium \
     && rm -rf /var/lib/apt/lists/*
 
-# Salin file package.json dan package-lock.json
+# Salin file package.json dan package-lock.json TERLEBIH DAHULU
 COPY package*.json ./
 
-# Install dependensi Node.js
-RUN npm install
+# Gunakan 'npm ci' untuk instalasi yang lebih cepat dan konsisten di lingkungan produksi
+# --omit=dev untuk tidak menginstall dependencies development
+RUN npm ci --omit=dev
 
-# Salin semua file source code ke dalam container
+# Salin semua file source code ke dalam container SETELAH npm install selesai
+# Ini memastikan perubahan kode tidak memicu ulang npm install
 COPY . .
 
 # Beritahu Puppeteer untuk mengabaikan sandbox dan menggunakan Chromium yang sudah diinstall
