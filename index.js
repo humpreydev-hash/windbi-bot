@@ -1,7 +1,5 @@
-import { Client, LocalAuth } from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
-import fs from 'fs';
-import os from 'os';
+import pkg from 'whatsapp-web.js';
+const { Client, LocalAuth } = pkg;
 
 // Fungsi untuk mendapatkan informasi sistem
 const getSystemInfo = () => {
@@ -35,7 +33,7 @@ const getSystemInfo = () => {
 const showMenu = (client, jid) => {
   const systemInfo = getSystemInfo();
   const menu = `╭╼━━━━━━━━━━━━━━━━━━━━╾❐
-│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔𝗧𝗦𝗔𝗣𝗣
+│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔� TOP
 ├╼━━━━━━━━━━━━━━━━━━━━╾╮
 │ 𝗨𝗣𝗧𝗜𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠
 │ • CPU   : ${systemInfo.cpu.model} (${systemInfo.cpu.cores} cores)
