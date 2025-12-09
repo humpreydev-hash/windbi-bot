@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "Whatsapp-chatgpt",
   "version": "1",
   "description": "WHATSAPP CHATGPT BOT, USING OPENAI",
@@ -48,3 +49,21 @@
   },
   "homepage": "https://github.com/harshitethic/whatsapp-chatgpt#readme"
 }
+=======
+  "name": "bot-wa-list-menu",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp dengan banyak fitur dan menu list button",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Nama Kamu",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "mime-types": "^2.1.35",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.23.0"
+  }
+}
+>>>>>>> 43326645c411bef63f9973072eb3d425b290f853
