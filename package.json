@@ -1,27 +1,34 @@
 {
   "name": "windbi-bot",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "WhatsApp Bot by humpreyDev",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "echo \"No tests specified\" && exit 0"
   },
-  "author": "humpreyDev",
-  "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.6.0",
-    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.5.0",
+    "axios": "^1.6.0",
     "qrcode-terminal": "^0.12.0",
-    "fs": "^0.0.1-security",
-    "os": "^0.1.2",
-    "axios": "^1.6.7",
     "ytdl-core": "^4.11.5",
     "yt-search": "^2.10.4",
     "moment-timezone": "^0.5.45"
   },
-  "devDependencies": {
-    "nodemon": "^3.1.0"
-  }
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "humpreyDev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/humpreydev-hash/windbi-botm"
+  },
+  "keywords": [
+    "whatsapp-bot",
+    "baileys",
+    "nodejs",
+    "windbi-bot"
+  ]
 }
