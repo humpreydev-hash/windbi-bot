@@ -1,16 +1,27 @@
 {
-  "name": "windbi-bot-whatsapp",
+  "name": "whatsapp-meme-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Bot with whatsapp-web.js",
+  "description": "WhatsApp Bot Meme Generator",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
-    "whatsapp-web.js": "^1.28.0",
-    "qrcode-terminal": "^0.12.0",
-    "fs": "0.0.1-security",
-    "os": "0.1.2"
-  }
+    "@whiskeysockets/baileys": "^3.7.1",
+    "axios": "^1.6.0",
+    "pino": "^8.13.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "meme",
+    "baileys"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
 }
