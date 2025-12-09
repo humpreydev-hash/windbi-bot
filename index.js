@@ -1,5 +1,10 @@
-import pkg from 'whatsapp-web.js';
-const { Client, LocalAuth } = pkg;
+import Baileys from '@adiwajshing/baileys';
+import qrcode from 'qrcode-terminal';
+import fs from 'fs';
+import os from 'os';
+
+// Ekstrak fungsi dari Baileys
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeInMemoryStore } = Baileys;
 
 // Fungsi untuk mendapatkan informasi sistem
 const getSystemInfo = () => {
@@ -12,7 +17,7 @@ const getSystemInfo = () => {
     cpu: {
       model: cpus[0]?.model || 'Unknown',
       cores: cpus.length,
-      usage: Math.round(Math.random() * 100) // Simulasi penggunaan CPU
+      usage: Math.round(Math.random() * 100)
     },
     ram: {
       total: Math.round(totalMem / (1024 * 1024 * 1024) * 100) / 100 + ' GB',
@@ -30,10 +35,10 @@ const getSystemInfo = () => {
 };
 
 // Fungsi untuk menampilkan menu
-const showMenu = (client, jid) => {
+const showMenu = (sock, jid) => {
   const systemInfo = getSystemInfo();
   const menu = `╭╼━━━━━━━━━━━━━━━━━━━━╾❐
-│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔� TOP
+│ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔𝗧𝗦𝗔𝗣𝗣
 ├╼━━━━━━━━━━━━━━━━━━━━╾╮
 │ 𝗨𝗣𝗧𝗜𝗠𝗘 𝗦𝗬𝗦𝗧𝗘𝗠
 │ • CPU   : ${systemInfo.cpu.model} (${systemInfo.cpu.cores} cores)
@@ -95,221 +100,219 @@ const showMenu = (client, jid) => {
 > pasti ada 100 error, tapi
 > 1% progress tetap progress."`;
 
-  client.sendMessage(jid, { text: menu });
+  sock.sendMessage(jid, { text: menu });
 };
 
 // Fungsi untuk menangani perintah
-const handleCommand = async (client, msg, command, args) => {
-  const jid = msg.id.remote;
-  const sender = msg.id.participant || msg.id.remote;
+const handleCommand = async (sock, msg, command, args) => {
+  const jid = msg.key.remoteJid;
+  const sender = msg.key.participant || msg.key.remoteJid;
   
   switch (command) {
     case '.verify':
-      await client.sendMessage(jid, { text: 'Verifikasi berhasil! Selamat datang di bot Windbi.' });
+      await sock.sendMessage(jid, { text: 'Verifikasi berhasil! Selamat datang di bot Windbi.' });
       break;
       
     case '.link':
-      await client.sendMessage(jid, { text: 'Link bot: https://github.com/humpreyDev/windbi-bot' });
+      await sock.sendMessage(jid, { text: 'Link bot: https://github.com/humpreyDev/windbi-bot' });
       break;
       
     case '.gig':
-      await client.sendMessage(jid, { text: 'Gig bot: https://gig.com/bot-windbi' });
+      await sock.sendMessage(jid, { text: 'Gig bot: https://gig.com/bot-windbi' });
       break;
       
     case '.github':
-      await client.sendMessage(jid, { text: 'GitHub: https://github.com/humpreyDev' });
+      await sock.sendMessage(jid, { text: 'GitHub: https://github.com/humpreyDev' });
       break;
       
     case '.tebakkata':
-      await client.sendMessage(jid, { text: 'Permainan tebak kata sedang dikembangkan...' });
+      await sock.sendMessage(jid, { text: 'Permainan tebak kata sedang dikembangkan...' });
       break;
       
     case '.mathquiz':
-      await client.sendMessage(jid, { text: 'Kuis matematika sedang dikembangkan...' });
+      await sock.sendMessage(jid, { text: 'Kuis matematika sedang dikembangkan...' });
       break;
       
     case '.tebakangka':
-      await client.sendMessage(jid, { text: 'Permainan tebak angka sedang dikembangkan...' });
+      await sock.sendMessage(jid, { text: 'Permainan tebak angka sedang dikembangkan...' });
       break;
       
     case '.cekiman':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Memanja ${args[0]}: 100%` });
+        await sock.sendMessage(jid, { text: `Memanja ${args[0]}: 100%` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .cekiman <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .cekiman <@user>' });
       }
       break;
       
     case '.cekfemboy':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Femboy level ${args[0]}: 95%` });
+        await sock.sendMessage(jid, { text: `Femboy level ${args[0]}: 95%` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .cekfemboy <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .cekfemboy <@user>' });
       }
       break;
       
     case '.cekfurry':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Furry level ${args[0]}: 80%` });
+        await sock.sendMessage(jid, { text: `Furry level ${args[0]}: 80%` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .cekfurry <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .cekfurry <@user>' });
       }
       break;
       
     case '.cekjamet':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Jamet level ${args[0]}: 99%` });
+        await sock.sendMessage(jid, { text: `Jamet level ${args[0]}: 99%` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .cekjamet <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .cekjamet <@user>' });
       }
       break;
       
     case '.playyt':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Memutar dari YouTube: ${args[0]}` });
+        await sock.sendMessage(jid, { text: `Memutar dari YouTube: ${args[0]}` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .playyt <link>' });
+        await sock.sendMessage(jid, { text: 'Usage: .playyt <link>' });
       }
       break;
       
     case '.yt':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Mengunduh dari YouTube: ${args[0]}` });
+        await sock.sendMessage(jid, { text: `Mengunduh dari YouTube: ${args[0]}` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .yt <url>' });
+        await sock.sendMessage(jid, { text: 'Usage: .yt <url>' });
       }
       break;
       
     case '.ig':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Mengunduh dari Instagram: ${args[0]}` });
+        await sock.sendMessage(jid, { text: `Mengunduh dari Instagram: ${args[0]}` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .ig <url>' });
+        await sock.sendMessage(jid, { text: 'Usage: .ig <url>' });
       }
       break;
       
     case '.kick':
       if (args[0]) {
-        await client.groupParticipantsUpdate(jid, [args[0].replace('@', '').replace(':', '')], 'remove');
-        await client.sendMessage(jid, { text: `User ${args[0]} telah di kick` });
+        await sock.groupParticipantsUpdate(jid, [args[0].replace('@', '').replace(':', '')], 'remove');
+        await sock.sendMessage(jid, { text: `User ${args[0]} telah di kick` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .kick <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .kick <@user>' });
       }
       break;
       
     case '.ban':
       if (args[0]) {
-        await client.groupParticipantsUpdate(jid, [args[0].replace('@', '').replace(':', '')], 'remove');
-        await client.sendMessage(jid, { text: `User ${args[0]} telah di ban` });
+        await sock.groupParticipantsUpdate(jid, [args[0].replace('@', '').replace(':', '')], 'remove');
+        await sock.sendMessage(jid, { text: `User ${args[0]} telah di ban` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .ban <@user>' });
+        await sock.sendMessage(jid, { text: 'Usage: .ban <@user>' });
       }
       break;
       
     case '.grup':
       if (args[0] === 'buka') {
-        await client.groupSettingUpdate(jid, 'not_announcement');
-        await client.sendMessage(jid, { text: 'Grup telah dibuka' });
+        await sock.groupSettingUpdate(jid, 'not_announcement');
+        await sock.sendMessage(jid, { text: 'Grup telah dibuka' });
       } else if (args[0] === 'tutup') {
-        await client.groupSettingUpdate(jid, 'announcement');
-        await client.sendMessage(jid, { text: 'Grup telah ditutup' });
+        await sock.groupSettingUpdate(jid, 'announcement');
+        await sock.sendMessage(jid, { text: 'Grup telah ditutup' });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .grup buka|tutup' });
+        await sock.sendMessage(jid, { text: 'Usage: .grup buka|tutup' });
       }
       break;
       
     case '.totag':
-      const groupMetadata = await client.groupMetadata(jid);
-      const participants = groupMetadata.participants;
+      const participants = await sock.groupMetadata(jid).then(metadata => metadata.participants);
       const tags = participants.map(p => `@${p.id.split('@')[0]}`).join(' ');
-      await client.sendMessage(jid, { text: tags, mentions: participants.map(p => p.id) });
+      await sock.sendMessage(jid, { text: tags, mentions: participants.map(p => p.id) });
       break;
       
     case '.npm':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Mencari ${args[0]} di npm...` });
+        await sock.sendMessage(jid, { text: `Mencari ${args[0]} di npm...` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .npm <library>' });
+        await sock.sendMessage(jid, { text: 'Usage: .npm <library>' });
       }
       break;
       
     case '.gclone':
       if (args[0]) {
-        await client.sendMessage(jid, { text: `Cloning ${args[0]}...` });
+        await sock.sendMessage(jid, { text: `Cloning ${args[0]}...` });
       } else {
-        await client.sendMessage(jid, { text: 'Usage: .gclone <github link>' });
+        await sock.sendMessage(jid, { text: 'Usage: .gclone <github link>' });
       }
       break;
       
     case '.apistatus':
-      await client.sendMessage(jid, { text: 'API Status: Online' });
+      await sock.sendMessage(jid, { text: 'API Status: Online' });
       break;
       
     default:
       if (command.startsWith('.')) {
-        await client.sendMessage(jid, { text: 'Perintah tidak dikenal. Ketik .menu untuk melihat daftar perintah.' });
+        await sock.sendMessage(jid, { text: 'Perintah tidak dikenal. Ketik .menu untuk melihat daftar perintah.' });
       }
   }
 };
 
 // Fungsi utama
 const main = async () => {
-  const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true,
+    browser: ['Windbi Bot', 'Chrome', '1.0.0']
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect } = update;
+    if (connection === 'close') {
+      const shouldReconnect = (lastDisconnect.error instanceof Error) 
+        && lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut;
+      console.log('Koneksi terputus, mencoba reconnect...', shouldReconnect);
+      if (shouldReconnect) {
+        main();
+      }
+    } else if (connection === 'open') {
+      console.log('Koneksi berhasil terbuka!');
     }
   });
 
-  client.on('qr', (qr) => {
-    console.log('Scan this QR code with your phone:');
-    qrcode.generate(qr, { small: true });
-  });
-
-  client.on('ready', () => {
-    console.log('Bot is ready!');
-    console.log('Logged in as ' + client.info.wid.user);
-  });
-
-  client.on('message', async (msg) => {
-    if (!msg.fromMe) {
-      const text = msg.body;
+  sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.key.fromMe && msg.message) {
+      const text = msg.message.conversation || 
+                   msg.message.extendedTextMessage?.text || 
+                   msg.message.imageMessage?.caption || 
+                   msg.message.videoMessage?.caption || 
+                   msg.message.audioMessage?.caption;
       
       if (text) {
         const args = text.trim().split(' ');
         const command = args.shift();
         
         if (command === '.menu') {
-          showMenu(client, msg.from);
+          showMenu(sock, msg.key.remoteJid);
         } else {
-          await handleCommand(client, msg, command, args);
+          await handleCommand(sock, msg, command, args);
         }
       }
     }
   });
 
-  client.on('group_participants.update', async (update) => {
+  sock.ev.on('group-participants.update', async (update) => {
     const { id, participants, action } = update;
     const welcomeText = 'Selamat datang di grup!';
     
     if (action === 'add') {
       for (const participant of participants) {
-        await client.sendMessage(id, { text: `${welcomeText} @${participant.split('@')[0]}`, mentions: [participant] });
+        await sock.sendMessage(id, { text: `${welcomeText} @${participant.split('@')[0]}`, mentions: [participant] });
       }
     }
   });
-
-  client.initialize();
 };
 
 main();
