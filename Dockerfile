@@ -5,7 +5,6 @@ FROM node:18-slim
 WORKDIR /app
 
 # Install library sistem yang dibutuhkan oleh Chromium/Puppeteer
-# --no-install-recommends untuk mengurangi ukuran image
 RUN apt-get update && apt-get install -yq \
     libglib2.0-0 \
     libnss3 \
@@ -21,18 +20,17 @@ RUN apt-get update && apt-get install -yq \
     chromium \
     && rm -rf /var/lib/apt/lists/*
 
-# Salin file package.json dan package-lock.json TERLEBIH DAHULU
-COPY package*.json ./
+# Salin file package.json SAJA
+COPY package.json ./
 
-# Gunakan 'npm ci' untuk instalasi yang lebih cepat dan konsisten di lingkungan produksi
-# --omit=dev untuk tidak menginstall dependencies development
-RUN npm ci --omit=dev
+# Install dependensi Node.js menggunakan 'npm install'
+# Ini lebih lambat tapi tidak butuh package-lock.json
+RUN npm install
 
-# Salin semua file source code ke dalam container SETELAH npm install selesai
-# Ini memastikan perubahan kode tidak memicu ulang npm install
+# Salin semua file source code ke dalam container
 COPY . .
 
-# Beritahu Puppeteer untuk mengabaikan sandbox dan menggunakan Chromium yang sudah diinstall
+# Beritahu Puppeteer untuk menggunakan Chromium yang sudah diinstall sistem
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
