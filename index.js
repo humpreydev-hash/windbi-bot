@@ -4,12 +4,16 @@ import qrcode from 'qrcode-terminal';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
-import ytdl from 'ytdl-core';
 import fs from 'fs/promises';
 import os from 'os';
 import osUtils from 'os-utils';
 import sqlite3 from 'sqlite3';
 import { readFile, writeFile, unlink } from 'fs/promises';
+import ffmpeg from 'fluent-ffmpeg';
+import webp from 'webp-converter';
+import ytdl from '@distube/ytdl-core';
+import search from 'youtube-search-api';
+import downloader from 'ab-downloader';
 
 // --- PENYESUAIAN UNTUK ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -17,23 +21,24 @@ const __dirname = path.dirname(__filename);
 // -----------------------------
 
 // --- KONFIGURASI BOT ---
-const ownerNumber = '6285929088764@s.whatsapp.net'; // Ganti dengan nomor WA kamu
+const ownerNumber = '6285929088764@s.whatsapp.net';
 const botPrefix = '.';
-let selfMode = false; // State untuk mode self
+let selfMode = false;
 
-// Path untuk Railway (sesuaikan)
+// Path untuk Railway
 const sessionId = process.env.RAILWAY_SERVICE_NAME || 'session';
-const dbPath = path.join('/tmp', 'verified_users.db'); // Database di /tmp agar tidak hilang
-const authPath = path.join(__dirname, 'auth_info_' + sessionId); // Sesi unik per service
+const dbPath = path.join('/tmp', 'verified_users.db');
+const authPath = path.join(__dirname, 'auth_info_' + sessionId);
+const tempDir = path.join('/tmp', 'bot_temp');
+// Buat temp directory jika belum ada
+try { await fs.mkdir(tempDir, { recursive: true }); } catch {}
 // -------------------------
 
 // --- FUNGSI DATABASE ---
 const db = new sqlite3.Database(dbPath);
 
-// Inisialisasi database
 db.serialize(() => {
     db.run('CREATE TABLE IF NOT EXISTS verified_users (jid TEXT PRIMARY KEY)');
-    db.run('CREATE TABLE IF NOT EXISTS game_scores (jid TEXT, game TEXT, score INTEGER)');
 });
 
 function isUserVerified(jid) {
@@ -84,7 +89,10 @@ function parseMention(text) {
 }
 
 function isOwner(jid) {
-    return jid === ownerNumber || jid.replace(/@s\.whatsapp\.net$/, '') === ownerNumber.replace(/@s\.whatsapp\.net$/, '');
+    if (!jid) return false;
+    const cleanJid = jid.replace(/:[^@]*@/, '@').replace(/\.0$/, '');
+    const cleanOwner = ownerNumber.replace(/:[^@]*@/, '@').replace(/\.0$/, '');
+    return cleanJid === cleanOwner;
 }
 
 async function getGroupAdmins(groupJid, sock) {
@@ -101,11 +109,39 @@ async function isGroupAdmin(groupJid, userJid, sock) {
     const admins = await getGroupAdmins(groupJid, sock);
     return admins.includes(userJid);
 }
+
+async function autoVerifyOwner(jid) {
+    if (isOwner(jid)) {
+        if (!(await isUserVerified(jid))) {
+            await addUserToDatabase(jid);
+            console.log(`✅ Owner ${jid} auto-verified`);
+        }
+        return true;
+    }
+    return false;
+}
+
+// Fungsi convert WebP to PNG/JPG
+async function convertWebpToImage(webpBuffer, outputPath) {
+    return new Promise((resolve, reject) => {
+        const tempWebp = path.join(tempDir, `temp_${Date.now()}.webp`);
+        fs.writeFile(tempWebp, webpBuffer)
+            .then(() => {
+                webp.dwebp(tempWebp, outputPath, "-o")
+                    .then(() => {
+                        fs.unlink(tempWebp).catch(() => {});
+                        resolve();
+                    })
+                    .catch(reject);
+            })
+            .catch(reject);
+    });
+}
 // -------------------------
 
 // --- FUNGSI-FUNGSI FITUR ---
 
-// 1. Menu
+// 1. Menu dengan gambar + caption
 async function showMenu(sock, message) {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
@@ -119,8 +155,6 @@ async function showMenu(sock, message) {
     const usedMem = totalMem - freeMem;
     const ramUsage = ((usedMem / totalMem) * 100).toFixed(2);
     
-    const githubLink = `https://github.com/humpreydev-hash/`;
-
     const menuText = `
 ╭╼━━━━━━━━━━━━━━━━━━━━╾❐
 │ 𝗪𝗜𝗡𝗗𝗕𝗜 𝗕𝗢𝗧 𝗪𝗛𝗔𝗧𝗦𝗔𝗣𝗣
@@ -138,7 +172,6 @@ async function showMenu(sock, message) {
 │ adalah project kedua setelah
 │ WindbiOm AI.
 ╰╼━━━━━━━━━━━━━━━━━━━━╾❏
-github: ${githubLink}
 
 ╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗣𝗨𝗕𝗟𝗜𝗞 ⧽━╾❐
 │ • .verify
@@ -162,17 +195,18 @@ github: ${githubLink}
 ╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽━╾❐
-│ • .playyt <query>
+│ • .playyt <link>
 │ • .yt <url>
 │ • .ig <url>
-│ • .stiker <reply> <watermark>
+│ • .tiktok <url>
+│ • .stiker <reply img/vid>
 │ • .tostiker <reply img/vid>
 │ • .tomedia <reply stiker>
 ╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗔𝗗𝗠𝗜𝗡 ⧽━╾❐
-│ • .kick <@tag>
-│ • .ban <@tag>
+│ • .kick <@..>
+│ • .ban <@..>
 │ • .grup buka|tutup
 │ • .totag <pesan>
 │ • .self
@@ -187,33 +221,50 @@ github: ${githubLink}
 ╰╼━━━━━━━━━━━━━━━━╾❏
 > copyright aal dev
 > humpreyDEV
-    `;
-    await sock.sendMessage(message.key.remoteJid, { text: menuText });
+`;
+    
+    try {
+        // Coba kirim gambar menu.png
+        const menuImagePath = path.join(__dirname, 'menu.png');
+        try {
+            await fs.access(menuImagePath);
+            // Kirim gambar dengan caption menu
+            await sock.sendMessage(message.key.remoteJid, {
+                image: { url: menuImagePath },
+                caption: menuText
+            });
+        } catch {
+            // Jika gambar tidak ada, kirim teks saja
+            await sock.sendMessage(message.key.remoteJid, { text: menuText });
+        }
+    } catch (error) {
+        console.error('Error sending menu:', error);
+        await sock.sendMessage(message.key.remoteJid, { text: menuText });
+    }
 }
 
-// 2. Verify (PERBAIKAN: Tidak spam dan cek lebih baik)
+// 2. Verify
 async function verifyCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     
-    // Cek apakah user sudah terverifikasi
-    const isVerified = await isUserVerified(senderJid);
-    if (isVerified) {
-        return sock.sendMessage(senderJid, { text: '✅ Nomor kamu sudah terverifikasi sebelumnya.' });
+    if (isOwner(senderJid)) {
+        if (!(await isUserVerified(senderJid))) {
+            await addUserToDatabase(senderJid);
+        }
+        return sock.sendMessage(message.key.remoteJid, { text: '✅ Owner otomatis terverifikasi!' });
     }
     
-    // Tambahkan user ke database
-    try {
-        await addUserToDatabase(senderJid);
-        await sock.sendMessage(senderJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
-    } catch (error) {
-        console.error('Verification error:', error);
-        await sock.sendMessage(senderJid, { text: '❌ Gagal melakukan verifikasi. Coba lagi.' });
+    if (await isUserVerified(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '✅ Nomor kamu sudah terverifikasi.' });
     }
+    await addUserToDatabase(senderJid);
+    return sock.sendMessage(message.key.remoteJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
 }
 
-// 3. Self / Unself (OWNER ONLY)
+// 3. Self / Unself
 async function selfCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
+    
     if (!isOwner(senderJid)) {
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
     }
@@ -223,6 +274,7 @@ async function selfCommand(sock, message) {
 
 async function unselfCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
+    
     if (!isOwner(senderJid)) {
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
     }
@@ -230,29 +282,27 @@ async function unselfCommand(sock, message) {
     return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self dinonaktifkan.' });
 }
 
-// 4. TikTok Downloader
-async function tosCommand(sock, message, text) {
+// 4. TikTok Downloader dengan ab-downloader
+async function tiktokCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link TikToknya!\nContoh: .tiktok https://vt.tiktok.com/xxx' });
     
     try {
-        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload...' });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload dari TikTok...' });
         
-        // Menggunakan API external untuk download TikTok
-        const response = await axios.get(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`);
-        const data = response.data;
+        const result = await downloader.tiktok(url);
         
-        if (data.video && data.video.noWatermark) {
-            await sock.sendMessage(message.key.remoteJid, { 
-                video: { url: data.video.noWatermark }, 
-                caption: `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title || 'Tanpa judul'}\n👤 *Author:* ${data.author.nickname || 'Unknown'}` 
+        if (result.type === 'video') {
+            await sock.sendMessage(message.key.remoteJid, {
+                video: { url: result.videoUrl },
+                caption: `*TikTok Downloader*\n\n🎵 *Judul:* ${result.title || 'Tanpa judul'}\n👤 *Author:* ${result.author || 'Unknown'}`
             });
-        } else if (data.images) {
-            for (const img of data.images) {
-                await sock.sendMessage(message.key.remoteJid, { image: { url: img } });
+        } else if (result.type === 'image') {
+            for (const imgUrl of result.images) {
+                await sock.sendMessage(message.key.remoteJid, { image: { url: imgUrl } });
             }
-            await sock.sendMessage(message.key.remoteJid, { 
-                text: `*TikTok Downloader*\n\n👤 *Author:* ${data.author.nickname || 'Unknown'}` 
+            await sock.sendMessage(message.key.remoteJid, {
+                text: `*TikTok Downloader*\n\n👤 *Author:* ${result.author || 'Unknown'}`
             });
         }
     } catch (error) {
@@ -261,7 +311,7 @@ async function tosCommand(sock, message, text) {
     }
 }
 
-// 5. Instagram Downloader (FIXED)
+// 5. Instagram Downloader dengan ab-downloader
 async function igCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!\nContoh: .ig https://instagram.com/p/xxx' });
@@ -269,23 +319,19 @@ async function igCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload dari Instagram...' });
         
-        // Menggunakan API external
-        const response = await axios.get(`https://api.igdownloader.app/api/igdl?url=${encodeURIComponent(url)}`);
-        const data = response.data;
+        const result = await downloader.instagram(url);
         
-        if (data.media) {
-            for (const media of data.media) {
+        if (result.media) {
+            for (const media of result.media) {
                 if (media.type === 'image') {
                     await sock.sendMessage(message.key.remoteJid, { image: { url: media.url } });
                 } else if (media.type === 'video') {
                     await sock.sendMessage(message.key.remoteJid, { video: { url: media.url } });
                 }
             }
-            await sock.sendMessage(message.key.remoteJid, { 
-                text: `*Instagram Downloader*\n\n👤 *Author:* ${data.username || 'Unknown'}` 
+            await sock.sendMessage(message.key.remoteJid, {
+                text: `*Instagram Downloader*\n\n👤 *Author:* ${result.author || 'Unknown'}`
             });
-        } else {
-            throw new Error('Tidak ada media ditemukan');
         }
     } catch (error) {
         console.error('Instagram download error:', error);
@@ -293,7 +339,7 @@ async function igCommand(sock, message, text) {
     }
 }
 
-// 6. YouTube Downloader (Audio)
+// 6. YouTube Audio dengan ytdl-core
 async function playytCommand(sock, message, text) {
     const query = text.slice(8).trim();
     if (!query) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan judul lagu!\nContoh: .playyt Coldplay Adventure of a Lifetime' });
@@ -301,19 +347,21 @@ async function playytCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Mencari lagu...' });
         
-        // Search video
-        const searchResults = await ytdl.getInfo(`https://www.youtube.com/watch?v=${(await ytdl.search(query, { limit: 1 }))[0]?.videoId}`);
-        
-        if (!searchResults) {
+        // Search dengan youtube-search-api
+        const searchResult = await search.GetListByKeyword(query, false, 1);
+        if (!searchResult.items || searchResult.items.length === 0) {
             return sock.sendMessage(message.key.remoteJid, { text: '❌ Lagu tidak ditemukan' });
         }
         
+        const videoId = searchResult.items[0].id;
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mengunduh audio...' });
         
-        // Download audio
-        const stream = ytdl(searchResults.videoDetails.video_url, { 
+        // Download audio dengan ytdl-core
+        const stream = ytdl(videoUrl, {
             filter: 'audioonly',
-            quality: 'highestaudio'
+            quality: 'highestaudio',
         });
         
         const chunks = [];
@@ -322,20 +370,20 @@ async function playytCommand(sock, message, text) {
         }
         const buffer = Buffer.concat(chunks);
         
-        // Send audio
-        await sock.sendMessage(message.key.remoteJid, { 
-            audio: buffer, 
+        // Kirim audio
+        await sock.sendMessage(message.key.remoteJid, {
+            audio: buffer,
             mimetype: 'audio/mpeg',
-            ptt: false
+            fileName: `${searchResult.items[0].title}.mp3`
         });
         
     } catch (error) {
-        console.error('YouTube audio download error:', error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh lagu.' });
+        console.error('YouTube audio error:', error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh audio.' });
     }
 }
 
-// 7. YouTube Downloader (Video)
+// 7. YouTube Video Downloader
 async function ytCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link YouTube!\nContoh: .yt https://youtube.com/watch?v=xxx' });
@@ -343,43 +391,31 @@ async function ytCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mengunduh video...' });
         
-        // Get video info
-        const info = await ytdl.getInfo(url);
-        const format = ytdl.chooseFormat(info.formats, { quality: 'lowest' });
+        const result = await downloader.youtube(url);
         
-        // Download video
-        const stream = ytdl(url, { quality: 'lowest' });
-        const chunks = [];
-        for await (const chunk of stream) {
-            chunks.push(chunk);
+        if (result.videoUrl) {
+            await sock.sendMessage(message.key.remoteJid, {
+                video: { url: result.videoUrl },
+                caption: `*YouTube Downloader*\n\n📹 *Judul:* ${result.title || 'Tanpa judul'}\n⏱️ *Durasi:* ${result.duration || 'Unknown'}`
+            });
+        } else {
+            throw new Error('Video tidak ditemukan');
         }
-        const buffer = Buffer.concat(chunks);
-        
-        // Send video
-        await sock.sendMessage(message.key.remoteJid, { 
-            video: buffer,
-            caption: `*YouTube Downloader*\n\n📹 *Judul:* ${info.videoDetails.title}\n⏱️ *Durasi:* ${info.videoDetails.lengthSeconds} detik`
-        });
-        
     } catch (error) {
-        console.error('YouTube video download error:', error);
+        console.error('YouTube video error:', error);
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh video.' });
     }
 }
 
-// 8. Sticker dengan watermark
+// 8. Sticker dengan ffmpeg dan webp-converter
 async function stikerCommand(sock, message, text) {
-    const msgType = Object.keys(message.message)[0];
-    const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
-    
-    if (!['imageMessage', 'videoMessage'].includes(msgType) && !isQuoted) {
-        return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .stiker <watermark>\nContoh: .stiker by WindbiBot' });
-    }
-    
     try {
-        const watermark = text.split(' ').slice(1).join(' ') || 'by WindbiBot';
+        const msgType = Object.keys(message.message)[0];
+        const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
         
         let buffer;
+        let isVideo = false;
+        
         if (isQuoted) {
             const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
             const quotedType = Object.keys(quotedMsg)[0];
@@ -394,93 +430,199 @@ async function stikerCommand(sock, message, text) {
                 chunks.push(chunk);
             }
             buffer = Buffer.concat(chunks);
+            isVideo = quotedType === 'videoMessage';
         } else {
+            if (!['imageMessage', 'videoMessage'].includes(msgType)) {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .stiker' });
+            }
+            
             const stream = await downloadContentFromMessage(message.message[msgType], msgType.replace('Message', ''));
             const chunks = [];
             for await (const chunk of stream) {
                 chunks.push(chunk);
             }
             buffer = Buffer.concat(chunks);
+            isVideo = msgType === 'videoMessage';
         }
+        
+        const watermark = text.split(' ').slice(1).join(' ') || 'by WindbiBot';
+        const tempInput = path.join(tempDir, `input_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`);
+        const tempOutput = path.join(tempDir, `output_${Date.now()}.webp`);
+        
+        // Simpan buffer ke file sementara
+        await fs.writeFile(tempInput, buffer);
+        
+        // Convert ke WebP menggunakan ffmpeg
+        await new Promise((resolve, reject) => {
+            const command = ffmpeg(tempInput)
+                .outputOptions([
+                    '-vcodec', 'libwebp',
+                    '-vf', `scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse`])
+                .toFormat('webp')
+                .on('end', resolve)
+                .on('error', reject)
+                .save(tempOutput);
+        });
+        
+        // Baca file output
+        const stickerBuffer = await fs.readFile(tempOutput);
         
         // Kirim sticker
-        await sock.sendMessage(message.key.remoteJid, { 
-            sticker: buffer,
-            contextInfo: {
-                mentionedJid: [],
-                forwardingScore: 999,
-                isForwarded: false
-            }
+        await sock.sendMessage(message.key.remoteJid, {
+            sticker: stickerBuffer
         }, { quoted: message });
         
+        // Cleanup
+        await fs.unlink(tempInput).catch(() => {});
+        await fs.unlink(tempOutput).catch(() => {});
+        
     } catch (error) {
-        console.error("Gagal membuat stiker:", error);
-        return sock.sendMessage(message.key.remoteJid, { text: 'Gagal membuat stiker.' });
+        console.error('Sticker error:', error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal membuat stiker.' });
     }
 }
 
-// 9. To Sticker (Image/Video to Sticker)
+// 9. To Sticker (tanpa watermark)
 async function tostikerCommand(sock, message) {
-    const msgType = Object.keys(message.message)[0];
-    
-    if (!['imageMessage', 'videoMessage'].includes(msgType)) {
-        return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .tostiker' });
-    }
-    
     try {
-        const stream = await downloadContentFromMessage(message.message[msgType], msgType.replace('Message', ''));
-        let buffer = Buffer.from([]);
-        for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk]);
+        const msgType = Object.keys(message.message)[0];
+        const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
+        
+        let buffer;
+        let isVideo = false;
+        
+        if (isQuoted) {
+            const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
+            const quotedType = Object.keys(quotedMsg)[0];
+            
+            if (!['imageMessage', 'videoMessage'].includes(quotedType)) {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Hanya bisa reply gambar/video!' });
+            }
+            
+            const stream = await downloadContentFromMessage(quotedMsg[quotedType], quotedType.replace('Message', ''));
+            const chunks = [];
+            for await (const chunk of stream) {
+                chunks.push(chunk);
+            }
+            buffer = Buffer.concat(chunks);
+            isVideo = quotedType === 'videoMessage';
+        } else {
+            if (!['imageMessage', 'videoMessage'].includes(msgType)) {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .tostiker' });
+            }
+            
+            const stream = await downloadContentFromMessage(message.message[msgType], msgType.replace('Message', ''));
+            const chunks = [];
+            for await (const chunk of stream) {
+                chunks.push(chunk);
+            }
+            buffer = Buffer.concat(chunks);
+            isVideo = msgType === 'videoMessage';
         }
         
-        await sock.sendMessage(message.key.remoteJid, { 
-            sticker: buffer 
+        const tempInput = path.join(tempDir, `input_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`);
+        const tempOutput = path.join(tempDir, `output_${Date.now()}.webp`);
+        
+        await fs.writeFile(tempInput, buffer);
+        
+        await new Promise((resolve, reject) => {
+            const command = ffmpeg(tempInput)
+                .outputOptions([
+                    '-vcodec', 'libwebp',
+                    '-vf', `scale='min(512,iw)':min'(512,ih)':force_original_aspect_ratio=decrease,fps=15, pad=512:512:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse`])
+                .toFormat('webp')
+                .on('end', resolve)
+                .on('error', reject)
+                .save(tempOutput);
+        });
+        
+        const stickerBuffer = await fs.readFile(tempOutput);
+        
+        await sock.sendMessage(message.key.remoteJid, {
+            sticker: stickerBuffer
         }, { quoted: message });
         
+        await fs.unlink(tempInput).catch(() => {});
+        await fs.unlink(tempOutput).catch(() => {});
+        
     } catch (error) {
-        console.error("Gagal membuat stiker:", error);
-        return sock.sendMessage(message.key.remoteJid, { text: 'Gagal membuat stiker.' });
+        console.error('To sticker error:', error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal membuat stiker.' });
     }
 }
 
-// 10. To Media (Sticker to Image)
+// 10. To Media (sticker to image/video)
 async function tomediaCommand(sock, message) {
-    const msgType = Object.keys(message.message)[0];
-    
-    if (msgType !== 'stickerMessage') {
-        return sock.sendMessage(message.key.remoteJid, { text: 'Reply stiker dengan caption .tomedia' });
-    }
-    
     try {
-        const stream = await downloadContentFromMessage(message.message.stickerMessage, 'image');
-        let buffer = Buffer.from([]);
-        for await (const chunk of stream) {
-            buffer = Buffer.concat([buffer, chunk]);
+        const msgType = Object.keys(message.message)[0];
+        const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
+        
+        let stickerMsg;
+        
+        if (isQuoted) {
+            const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
+            if (!quotedMsg.stickerMessage) {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Reply stiker dengan caption .tomedia' });
+            }
+            stickerMsg = quotedMsg.stickerMessage;
+        } else {
+            if (msgType !== 'stickerMessage') {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Reply stiker dengan caption .tomedia' });
+            }
+            stickerMsg = message.message.stickerMessage;
         }
         
-        // Check if sticker is animated
-        const isAnimated = message.message.stickerMessage.isAnimated;
+        const stream = await downloadContentFromMessage(stickerMsg, 'sticker');
+        const chunks = [];
+        for await (const chunk of stream) {
+            chunks.push(chunk);
+        }
+        const webpBuffer = Buffer.concat(chunks);
+        
+        const isAnimated = stickerMsg.isAnimated || false;
+        const outputPath = path.join(tempDir, `output_${Date.now()}.${isAnimated ? 'gif' : 'png'}`);
         
         if (isAnimated) {
-            // Convert to video
-            await sock.sendMessage(message.key.remoteJid, { 
-                video: buffer 
+            // Convert animated WebP to GIF
+            const tempWebp = path.join(tempDir, `temp_${Date.now()}.webp`);
+            await fs.writeFile(tempWebp, webpBuffer);
+            
+            await new Promise((resolve, reject) => {
+                ffmpeg(tempWebp)
+                    .output(outputPath)
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .run();
+            });
+            
+            await fs.unlink(tempWebp).catch(() => {});
+            
+            const mediaBuffer = await fs.readFile(outputPath);
+            await sock.sendMessage(message.key.remoteJid, {
+                video: mediaBuffer,
+                caption: 'Converted from sticker'
             }, { quoted: message });
+            
         } else {
-            // Convert to image
-            await sock.sendMessage(message.key.remoteJid, { 
-                image: buffer 
+            // Convert static WebP to PNG
+            await convertWebpToImage(webpBuffer, outputPath);
+            
+            const mediaBuffer = await fs.readFile(outputPath);
+            await sock.sendMessage(message.key.remoteJid, {
+                image: mediaBuffer,
+                caption: 'Converted from sticker'
             }, { quoted: message });
         }
         
+        await fs.unlink(outputPath).catch(() => {});
+        
     } catch (error) {
-        console.error("Gagal mengkonversi stiker:", error);
-        return sock.sendMessage(message.key.remoteJid, { text: 'Gagal mengkonversi stiker ke media.' });
+        console.error('To media error:', error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengkonversi stiker.' });
     }
 }
 
-// 11. Group Open/Close (ADMIN ONLY)
+// 11. Group Open/Close
 async function grupCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -489,7 +631,6 @@ async function grupCommand(sock, message, text) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
     
-    // Cek apakah pengirim adalah admin
     const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
     if (!isAdmin && !isOwner(senderJid)) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
@@ -507,7 +648,7 @@ async function grupCommand(sock, message, text) {
     }
 }
 
-// 12. Tag All (ADMIN ONLY)
+// 12. Tag All
 async function totagCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -516,7 +657,6 @@ async function totagCommand(sock, message, text) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
     
-    // Cek apakah pengirim adalah admin
     const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
     if (!isAdmin && !isOwner(senderJid)) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
@@ -528,9 +668,9 @@ async function totagCommand(sock, message, text) {
         const mentions = participants.map(p => p.id);
         const msgToTag = text.slice(7).trim() || 'Halo semua!';
         
-        await sock.sendMessage(groupJid, { 
-            text: `📢 *PEMBERITAHUAN*\n\n${msgToTag}\n\n_Mention all by ${metadata.subject || 'Group'}_`, 
-            mentions 
+        await sock.sendMessage(groupJid, {
+            text: `📢 *PEMBERITAHUAN*\n\n${msgToTag}\n\n_Dari: ${senderJid.split('@')[0]}_`,
+            mentions
         });
         
     } catch (error) {
@@ -539,7 +679,7 @@ async function totagCommand(sock, message, text) {
     }
 }
 
-// 13. Kick Member (ADMIN ONLY)
+// 13. Kick Member
 async function kickCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -548,7 +688,6 @@ async function kickCommand(sock, message, text) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
     
-    // Cek apakah pengirim adalah admin
     const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
     if (!isAdmin && !isOwner(senderJid)) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
@@ -562,7 +701,7 @@ async function kickCommand(sock, message, text) {
     try {
         for (const userJid of mentions) {
             await sock.groupParticipantsUpdate(groupJid, [userJid], 'remove');
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Delay antar kick
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
         await sock.sendMessage(groupJid, { text: `✅ Berhasil mengeluarkan ${mentions.length} member.` });
     } catch (error) {
@@ -571,7 +710,7 @@ async function kickCommand(sock, message, text) {
     }
 }
 
-// 14. Ban Member (ADMIN ONLY)
+// 14. Ban Member
 async function banCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -580,7 +719,6 @@ async function banCommand(sock, message, text) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
     
-    // Cek apakah pengirim adalah admin
     const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
     if (!isAdmin && !isOwner(senderJid)) {
         return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
@@ -592,10 +730,8 @@ async function banCommand(sock, message, text) {
     }
     
     try {
-        // Ban = kick + prevent join
         for (const userJid of mentions) {
             await sock.groupParticipantsUpdate(groupJid, [userJid], 'remove');
-            // Bisa ditambahkan log ke database untuk banned users
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
         await sock.sendMessage(groupJid, { text: `✅ Berhasil mem-ban ${mentions.length} member.` });
@@ -619,7 +755,7 @@ async function githubCommand(sock, message, text) {
     }
 }
 
-// 16. NPM Info (OWNER ONLY)
+// 16. NPM Info
 async function npmCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -640,7 +776,7 @@ async function npmCommand(sock, message, text) {
     }
 }
 
-// 17. GitHub Clone (OWNER ONLY)
+// 17. GitHub Clone
 async function gcloneCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -651,7 +787,6 @@ async function gcloneCommand(sock, message, text) {
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan link GitHub.\nContoh: .gclone https://github.com/user/repo' });
     
     try {
-        // Extract repo info from URL
         const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
         if (!match) {
             return sock.sendMessage(message.key.remoteJid, { text: '❌ Format URL tidak valid.' });
@@ -671,7 +806,7 @@ async function gcloneCommand(sock, message, text) {
     }
 }
 
-// 18. API Status (OWNER ONLY)
+// 18. API Status
 async function apistatusCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -682,8 +817,8 @@ async function apistatusCommand(sock, message) {
         const apis = [
             { name: 'GitHub API', url: 'https://api.github.com' },
             { name: 'NPM Registry', url: 'https://registry.npmjs.org' },
-            { name: 'YouTube', url: 'https://www.youtube.com' },
-            { name: 'Instagram', url: 'https://www.instagram.com' }
+            { name: 'YouTube API', url: 'https://www.googleapis.com' },
+            { name: 'Instagram API', url: 'https://www.instagram.com' }
         ];
         
         let statusText = '*API Status Check*\n\n';
@@ -706,7 +841,7 @@ async function apistatusCommand(sock, message) {
     }
 }
 
-// 19. Log (OWNER ONLY)
+// 19. Log
 async function logCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -714,6 +849,7 @@ async function logCommand(sock, message) {
     }
     
     try {
+        const verifiedCount = await getVerifiedCount();
         const logInfo = `
 *System Log Information*
         
@@ -727,7 +863,7 @@ async function logCommand(sock, message) {
 *Bot Status:*
 ✅ Connected
 🔧 Self Mode: ${selfMode ? 'ON' : 'OFF'}
-📊 Verified Users: ${await getVerifiedCount()} users
+📊 Verified Users: ${verifiedCount} users
         `;
         
         await sock.sendMessage(message.key.remoteJid, { text: logInfo });
@@ -747,7 +883,7 @@ function getVerifiedCount() {
     });
 }
 
-// 20. Get Group Info (gig)
+// 20. Get Group Info
 async function gigCommand(sock, message) {
     const groupJid = message.key.remoteJid;
     
@@ -770,8 +906,6 @@ async function gigCommand(sock, message) {
 🔗 *Group ID:* ${metadata.id}
 📅 *Dibuat:* ${new Date(metadata.creation * 1000).toLocaleDateString()}
 🔒 *Status:* ${metadata.announce ? 'Terkunci (hanya admin)' : 'Terbuka (semua bisa chat)'}
-        
-*Bot Status:* ${participants.find(p => p.id === sock.user.id) ? '✅ Ada di grup' : '❌ Tidak ada di grup'}
         `;
         
         await sock.sendMessage(groupJid, { text: groupInfo });
@@ -793,8 +927,8 @@ async function linkCommand(sock, message) {
         const code = await sock.groupInviteCode(groupJid);
         const inviteLink = `https://chat.whatsapp.com/${code}`;
         
-        await sock.sendMessage(groupJid, { 
-            text: `*Group Invite Link*\n\n🔗 ${inviteLink}\n\nShare link ini untuk mengundang orang ke grup.` 
+        await sock.sendMessage(groupJid, {
+            text: `*Group Invite Link*\n\n🔗 ${inviteLink}\n\nShare link ini untuk mengundang orang ke grup.`
         });
     } catch (error) {
         console.error('Link error:', error);
@@ -813,11 +947,10 @@ async function tebakkataCommand(sock, message) {
         timestamp: Date.now()
     };
     
-    await sock.sendMessage(gameId, { 
-        text: `*Game Tebak Kata* 🎮\n\n${randomGame.soal}\n\nJawab dengan mengetik jawaban kamu!` 
+    await sock.sendMessage(gameId, {
+        text: `*Game Tebak Kata* 🎮\n\n${randomGame.soal}\n\nJawab dengan mengetik jawaban kamu!`
     });
     
-    // Set timeout untuk game (5 menit)
     setTimeout(() => {
         if (activeGames[gameId]) {
             delete activeGames[gameId];
@@ -846,8 +979,8 @@ async function mathquizCommand(sock, message) {
         timestamp: Date.now()
     };
     
-    await sock.sendMessage(gameId, { 
-        text: `*Math Quiz* 🧮\n\nBerapakah hasil dari: ${num1} ${operator} ${num2} ?\n\nJawab dengan angka!` 
+    await sock.sendMessage(gameId, {
+        text: `*Math Quiz* 🧮\n\nBerapakah hasil dari: ${num1} ${operator} ${num2} ?\n\nJawab dengan angka!`
     });
     
     setTimeout(() => {
@@ -870,8 +1003,8 @@ async function tebakangkaCommand(sock, message) {
         hints: 0
     };
     
-    await sock.sendMessage(gameId, { 
-        text: `*Game Tebak Angka* 🎯\n\nSaya memikirkan angka antara 1-100.\nTebak angka yang saya pikirkan!\n\nKetik .hint untuk mendapatkan petunjuk.` 
+    await sock.sendMessage(gameId, {
+        text: `*Game Tebak Angka* 🎯\n\nSaya memikirkan angka antara 1-100.\nTebak angka yang saya pikirkan!\n\nKetik .hint untuk mendapatkan petunjuk.`
     });
     
     setTimeout(() => {
@@ -881,13 +1014,12 @@ async function tebakangkaCommand(sock, message) {
     }, 5 * 60 * 1000);
 }
 
-// 25. Cek Fun (Random Percentage)
+// 25. Cek Fun
 function cekFun(sock, message, text, type) {
     const mentions = parseMention(text);
     const senderJid = message.key.participant || message.key.remoteJid;
     
     if (mentions.length === 0) {
-        // Jika tidak ada mention, cek diri sendiri
         const percentage = Math.floor(Math.random() * 101);
         const types = {
             'iman': 'Kadar iman',
@@ -896,11 +1028,10 @@ function cekFun(sock, message, text, type) {
             'jamet': 'Kadar jamet'
         };
         
-        sock.sendMessage(message.key.remoteJid, { 
-            text: `${types[type]} kamu: ${percentage}% ${percentage > 70 ? '😱' : percentage > 40 ? '😅' : '😌'}` 
+        sock.sendMessage(message.key.remoteJid, {
+            text: `${types[type]} kamu: ${percentage}% ${percentage > 70 ? '😱' : percentage > 40 ? '😅' : '😌'}`
         }, { quoted: message });
     } else {
-        // Jika ada mention, cek orang yang di-tag
         const target = mentions[0];
         const percentage = Math.floor(Math.random() * 101);
         const types = {
@@ -910,14 +1041,14 @@ function cekFun(sock, message, text, type) {
             'jamet': 'Kadar jamet'
         };
         
-        sock.sendMessage(message.key.remoteJid, { 
+        sock.sendMessage(message.key.remoteJid, {
             text: `${types[type]} orang itu: ${percentage}%`,
             mentions: [target]
         }, { quoted: message });
     }
 }
 
-// 26. Game Handler untuk jawaban
+// 26. Game Handler
 async function handleGameAnswer(sock, message) {
     const gameId = message.key.remoteJid;
     const game = activeGames[gameId];
@@ -930,16 +1061,16 @@ async function handleGameAnswer(sock, message) {
     if (game.type === 'tebakkata') {
         if (userAnswer === game.answer) {
             delete activeGames[gameId];
-            await sock.sendMessage(gameId, { 
-                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!` 
+            await sock.sendMessage(gameId, {
+                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!`
             }, { quoted: message });
             return true;
         }
     } else if (game.type === 'mathquiz') {
         if (userAnswer === game.answer) {
             delete activeGames[gameId];
-            await sock.sendMessage(gameId, { 
-                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!` 
+            await sock.sendMessage(gameId, {
+                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!`
             }, { quoted: message });
             return true;
         }
@@ -952,8 +1083,8 @@ async function handleGameAnswer(sock, message) {
         
         if (userNum === answerNum) {
             delete activeGames[gameId];
-            await sock.sendMessage(gameId, { 
-                text: `🎉 *Benar!*\nAngka yang saya pikirkan: ${game.answer}\n\nKamu menebak dalam ${game.attempts} percobaan!\nSelamat ${senderJid.split('@')[0]}!` 
+            await sock.sendMessage(gameId, {
+                text: `🎉 *Benar!*\nAngka yang saya pikirkan: ${game.answer}\n\nKamu menebak dalam ${game.attempts} percobaan!\nSelamat ${senderJid.split('@')[0]}!`
             }, { quoted: message });
             return true;
         } else {
@@ -964,16 +1095,15 @@ async function handleGameAnswer(sock, message) {
                 hint = '📉 Angka terlalu besar!';
             }
             
-            // Beri hint setiap 3 percobaan
             if (game.attempts % 3 === 0 && game.hints < 3) {
                 game.hints++;
                 const rangeHint = `Angka antara ${Math.max(1, answerNum - 10)} dan ${Math.min(100, answerNum + 10)}`;
-                await sock.sendMessage(gameId, { 
-                    text: `❌ Salah!\n${hint}\n\n💡 *Hint ${game.hints}:* ${rangeHint}` 
+                await sock.sendMessage(gameId, {
+                    text: `❌ Salah!\n${hint}\n\n💡 *Hint ${game.hints}:* ${rangeHint}`
                 }, { quoted: message });
             } else {
-                await sock.sendMessage(gameId, { 
-                    text: `❌ Salah!\n${hint}` 
+                await sock.sendMessage(gameId, {
+                    text: `❌ Salah!\n${hint}`
                 }, { quoted: message });
             }
             return true;
@@ -983,7 +1113,7 @@ async function handleGameAnswer(sock, message) {
     return false;
 }
 
-// 27. Hint untuk tebakangka
+// 27. Hint
 async function hintCommand(sock, message) {
     const gameId = message.key.remoteJid;
     const game = activeGames[gameId];
@@ -1013,8 +1143,8 @@ async function hintCommand(sock, message) {
             break;
     }
     
-    await sock.sendMessage(message.key.remoteJid, { 
-        text: `💡 *Hint ${game.hints}:* ${hint}` 
+    await sock.sendMessage(message.key.remoteJid, {
+        text: `💡 *Hint ${game.hints}:* ${hint}`
     });
 }
 
@@ -1040,7 +1170,6 @@ async function startBot() {
         if (qr) {
             console.log('Scan QR code ini dengan WhatsApp Anda:');
             qrcode.generate(qr, { small: true });
-            // Tampilkan URL QR untuk Railway
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qr)}`;
             console.log(`Atau buka link ini di browser: ${qrUrl}`);
         }
@@ -1052,6 +1181,7 @@ async function startBot() {
             }
         } else if (connection === 'open') {
             console.log('✅ Bot berhasil terhubung!');
+            console.log(`Bot ID: ${sock.user?.id}`);
         }
     });
 
@@ -1066,27 +1196,32 @@ async function startBot() {
         const senderJid = msg.key.participant || msg.key.remoteJid;
         const messageText = extractMessageText(msg);
         
-        // Cek apakah ini jawaban game
+        console.log(`\n--- Pesan Masuk ---`);
+        console.log(`Dari: ${senderJid}`);
+        console.log(`Pesan: ${messageText}`);
+        console.log(`--------------------\n`);
+        
+        await autoVerifyOwner(senderJid);
+        
         const isGameAnswer = await handleGameAnswer(sock, msg);
         if (isGameAnswer) return;
         
         if (!messageText.startsWith(botPrefix)) return;
 
         const command = messageText.toLowerCase().trim().split(/ +/)[0];
-        
-        console.log(`\n--- Pesan Masuk ---`);
-        console.log(`Dari: ${senderJid}`);
-        console.log(`Command: ${command}`);
-        console.log(`--------------------\n`);
 
-        // --- SISTEM VERIFIKASI & SELF ---
-        if (command !== '.verify' && !(await isUserVerified(senderJid))) {
-            return sock.sendMessage(msg.key.remoteJid, { text: '❌ Kamu belum terverifikasi. Ketik *.verify* untuk menggunakan bot.' });
+        const isVerified = await isUserVerified(senderJid);
+        
+        if (command !== '.verify' && !isVerified) {
+            return sock.sendMessage(msg.key.remoteJid, {
+                text: '❌ Kamu belum terverifikasi.\nKetik *.verify* untuk menggunakan bot.'
+            });
         }
+        
         if (selfMode && !isOwner(senderJid)) {
+            console.log(`Self mode aktif, blokir pengguna: ${senderJid}`);
             return;
         }
-        // --- AKHIR SISTEM ---
 
         try {
             switch (command) {
@@ -1094,7 +1229,7 @@ async function startBot() {
                 case '.verify': await verifyCommand(sock, msg); break;
                 case '.self': await selfCommand(sock, msg); break;
                 case '.unself': await unselfCommand(sock, msg); break;
-                case '.tos': case '.tiktok': await tosCommand(sock, msg, messageText); break;
+                case '.tiktok': case '.tos': await tiktokCommand(sock, msg, messageText); break;
                 case '.ig': await igCommand(sock, msg, messageText); break;
                 case '.playyt': await playytCommand(sock, msg, messageText); break;
                 case '.yt': await ytCommand(sock, msg, messageText); break;
