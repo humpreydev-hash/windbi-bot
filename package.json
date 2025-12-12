@@ -1,32 +1,31 @@
 {
-  "name": "whatsapp-bot-railway",
-  "version": "4.0.0",
-  "description": "Bot WhatsApp untuk Railway dengan semua fitur",
+  "name": "windbi-bot-whatsapp",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp dengan fitur lengkap menggunakan Node.js",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "postinstall": "apt-get update && apt-get install -y ffmpeg"
+    "dev": "nodemon index.js"
   },
   "keywords": [
-    "bot",
     "whatsapp",
+    "bot",
     "baileys",
-    "sticker",
-    "converter"
+    "nodejs"
   ],
   "author": "humpreyDev",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "6.5.0",
     "@hapi/boom": "^10.0.1",
-    "qrcode-terminal": "^0.12.0",
-    "axios": "^1.6.2",
-    "sqlite3": "^5.1.6",
+    "@whiskeysockets/baileys": "^6.7.9",
+    "axios": "^1.6.8",
+    "fluent-ffmpeg": "^2.1.2",
     "os-utils": "^0.0.14",
-    "fluent-ffmpeg": "^2.1.2"
+    "qrcode-terminal": "^0.12.0",
+    "sqlite3": "^5.1.6"
   },
-  "engines": {
-    "node": ">=18.0.0"
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }

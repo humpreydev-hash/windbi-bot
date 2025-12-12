@@ -10,12 +10,11 @@ import osUtils from 'os-utils';
 import sqlite3 from 'sqlite3';
 import ffmpeg from 'fluent-ffmpeg';
 
-// --- PENYESUAIAN UNTUK ESM ---
+// Penyesuaian untuk ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// -----------------------------
 
-// --- KONFIGURASI BOT ---
+// Konfigurasi Bot
 const ownerNumber = '6285929088764@s.whatsapp.net';
 const botPrefix = '.';
 let selfMode = false;
@@ -26,16 +25,15 @@ const dbPath = path.join('/tmp', 'verified_users.db');
 const authPath = path.join(__dirname, 'auth_info_' + sessionId);
 const tempDir = path.join('/tmp', 'bot_temp');
 
-// Buat temp directory jika belum ada
+// Buat temporary directory
 try {
     await fs.mkdir(tempDir, { recursive: true });
     console.log('✅ Temporary directory created');
 } catch (error) {
     console.log('Temporary directory already exists');
 }
-// -------------------------
 
-// --- FUNGSI DATABASE ---
+// Fungsi Database
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
@@ -60,9 +58,8 @@ function addUserToDatabase(jid) {
         });
     });
 }
-// -------------------------
 
-// --- DATA GAME ---
+// Data Game
 const tebakkataData = [
     { soal: "Aku punya daun tapi bukan pohon, aku punya duri tapi bukan mawar. Siapa aku?", jawab: "nanas" },
     { soal: "Berjalan tanpa kaki, bernyanyi tanpa mulut, tak pernah tidur tapi selalu diam. Siapa aku?", jawab: "sungai" },
@@ -72,9 +69,8 @@ const tebakkataData = [
 ];
 
 let activeGames = {};
-// -------------------------
 
-// --- FUNGSI HELPER ---
+// Fungsi Helper
 function extractMessageText(msg) {
     const msgType = Object.keys(msg.message)[0];
     if (msgType === 'conversation') return msg.message.conversation;
@@ -123,7 +119,7 @@ async function autoVerifyOwner(jid) {
     return false;
 }
 
-// Fungsi untuk convert WebP ke PNG menggunakan ffmpeg
+// Fungsi untuk konversi WebP ke PNG
 async function convertWebpToPng(webpBuffer) {
     return new Promise((resolve, reject) => {
         const tempWebp = path.join(tempDir, `webp_${Date.now()}.webp`);
@@ -155,7 +151,7 @@ async function convertWebpToPng(webpBuffer) {
     });
 }
 
-// Fungsi untuk membuat sticker dari gambar (ffmpeg only)
+// Fungsi untuk membuat stiker dari gambar
 async function createStickerFromImage(imageBuffer) {
     return new Promise((resolve, reject) => {
         const tempInput = path.join(tempDir, `img_input_${Date.now()}.jpg`);
@@ -196,7 +192,7 @@ async function createStickerFromImage(imageBuffer) {
     });
 }
 
-// Fungsi untuk membuat sticker dari video
+// Fungsi untuk membuat stiker dari video
 async function createStickerFromVideo(videoBuffer) {
     return new Promise((resolve, reject) => {
         const tempInput = path.join(tempDir, `video_input_${Date.now()}.mp4`);
@@ -237,7 +233,7 @@ async function createStickerFromVideo(videoBuffer) {
     });
 }
 
-// Fungsi untuk konversi WebP ke video (untuk sticker animated)
+// Fungsi untuk konversi WebP ke video
 async function convertWebpToVideo(webpBuffer) {
     return new Promise((resolve, reject) => {
         const tempInput = path.join(tempDir, `animated_input_${Date.now()}.webp`);
@@ -274,7 +270,7 @@ async function convertWebpToVideo(webpBuffer) {
     });
 }
 
-// Fungsi untuk convert WebP ke GIF
+// Fungsi untuk konversi WebP ke GIF
 async function convertWebpToGif(webpBuffer) {
     return new Promise((resolve, reject) => {
         const tempInput = path.join(tempDir, `gif_input_${Date.now()}.webp`);
@@ -308,11 +304,8 @@ async function convertWebpToGif(webpBuffer) {
             .catch(reject);
     });
 }
-// -------------------------
 
-// --- FUNGSI-FUNGSI FITUR ---
-
-// 1. Menu
+// Fungsi Menu
 async function showMenu(sock, message) {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
@@ -407,7 +400,7 @@ async function showMenu(sock, message) {
     }
 }
 
-// 2. Verify
+// Fungsi Verify
 async function verifyCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     
@@ -425,7 +418,7 @@ async function verifyCommand(sock, message) {
     return sock.sendMessage(message.key.remoteJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
 }
 
-// 3. Self / Unself
+// Fungsi Self / Unself
 async function selfCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     
@@ -446,7 +439,7 @@ async function unselfCommand(sock, message) {
     return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self dinonaktifkan.' });
 }
 
-// 4. TikTok Downloader
+// Fungsi TikTok Downloader
 async function tiktokCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link TikToknya!\nContoh: .tiktok https://vt.tiktok.com/xxx' });
@@ -474,7 +467,7 @@ async function tiktokCommand(sock, message, text) {
     }
 }
 
-// 5. Instagram Downloader
+// Fungsi Instagram Downloader
 async function igCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!\nContoh: .ig https://instagram.com/p/xxx' });
@@ -509,7 +502,7 @@ async function igCommand(sock, message, text) {
     }
 }
 
-// 6. YouTube Video Downloader
+// Fungsi YouTube Video Downloader
 async function ytCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link YouTube!\nContoh: .yt https://youtube.com/watch?v=xxx' });
@@ -541,7 +534,7 @@ async function ytCommand(sock, message, text) {
     }
 }
 
-// 7. Sticker dengan ffmpeg
+// Fungsi Sticker dengan ffmpeg
 async function stikerCommand(sock, message, text) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -597,7 +590,7 @@ async function stikerCommand(sock, message, text) {
     }
 }
 
-// 8. To Sticker
+// Fungsi To Sticker
 async function tostikerCommand(sock, message) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -653,7 +646,7 @@ async function tostikerCommand(sock, message) {
     }
 }
 
-// 9. To Media (convert sticker to image/video)
+// Fungsi To Media (convert sticker to image/video)
 async function tomediaCommand(sock, message) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -714,7 +707,7 @@ async function tomediaCommand(sock, message) {
     }
 }
 
-// 10. Group Open/Close
+// Fungsi Group Open/Close
 async function grupCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -740,7 +733,7 @@ async function grupCommand(sock, message, text) {
     }
 }
 
-// 11. Tag All
+// Fungsi Tag All
 async function totagCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -771,7 +764,7 @@ async function totagCommand(sock, message, text) {
     }
 }
 
-// 12. Kick Member
+// Fungsi Kick Member
 async function kickCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -802,7 +795,7 @@ async function kickCommand(sock, message, text) {
     }
 }
 
-// 13. Ban Member
+// Fungsi Ban Member
 async function banCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     const groupJid = message.key.remoteJid;
@@ -833,7 +826,7 @@ async function banCommand(sock, message, text) {
     }
 }
 
-// 14. GitHub Info
+// Fungsi GitHub Info
 async function githubCommand(sock, message, text) {
     const username = text.split(' ')[1];
     if (!username) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan username GitHub.\nContoh: .github humpreydev-hash' });
@@ -847,7 +840,7 @@ async function githubCommand(sock, message, text) {
     }
 }
 
-// 15. NPM Info
+// Fungsi NPM Info
 async function npmCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -868,7 +861,7 @@ async function npmCommand(sock, message, text) {
     }
 }
 
-// 16. GitHub Clone
+// Fungsi GitHub Clone
 async function gcloneCommand(sock, message, text) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -898,7 +891,7 @@ async function gcloneCommand(sock, message, text) {
     }
 }
 
-// 17. API Status
+// Fungsi API Status
 async function apistatusCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -932,7 +925,7 @@ async function apistatusCommand(sock, message) {
     }
 }
 
-// 18. Log
+// Fungsi Log
 async function logCommand(sock, message) {
     const senderJid = message.key.participant || message.key.remoteJid;
     if (!isOwner(senderJid)) {
@@ -974,7 +967,7 @@ function getVerifiedCount() {
     });
 }
 
-// 19. Get Group Info
+// Fungsi Get Group Info
 async function gigCommand(sock, message) {
     const groupJid = message.key.remoteJid;
     
@@ -1006,7 +999,7 @@ async function gigCommand(sock, message) {
     }
 }
 
-// 20. Link Group
+// Fungsi Link Group
 async function linkCommand(sock, message) {
     const groupJid = message.key.remoteJid;
     
@@ -1027,7 +1020,7 @@ async function linkCommand(sock, message) {
     }
 }
 
-// 21. Tebak Kata Game
+// Fungsi Tebak Kata Game
 async function tebakkataCommand(sock, message) {
     const gameId = message.key.remoteJid;
     const randomGame = tebakkataData[Math.floor(Math.random() * tebakkataData.length)];
@@ -1049,7 +1042,7 @@ async function tebakkataCommand(sock, message) {
     }, 5 * 60 * 1000);
 }
 
-// 22. Math Quiz Game
+// Fungsi Math Quiz Game
 async function mathquizCommand(sock, message) {
     const gameId = message.key.remoteJid;
     const num1 = Math.floor(Math.random() * 50) + 1;
@@ -1081,7 +1074,7 @@ async function mathquizCommand(sock, message) {
     }, 3 * 60 * 1000);
 }
 
-// 23. Tebak Angka Game
+// Fungsi Tebak Angka Game
 async function tebakangkaCommand(sock, message) {
     const gameId = message.key.remoteJid;
     const answer = Math.floor(Math.random() * 100) + 1;
@@ -1105,7 +1098,7 @@ async function tebakangkaCommand(sock, message) {
     }, 5 * 60 * 1000);
 }
 
-// 24. Cek Fun
+// Fungsi Cek Fun
 function cekFun(sock, message, text, type) {
     const mentions = parseMention(text);
     const senderJid = message.key.participant || message.key.remoteJid;
@@ -1139,7 +1132,7 @@ function cekFun(sock, message, text, type) {
     }
 }
 
-// 25. Game Handler
+// Fungsi Game Handler
 async function handleGameAnswer(sock, message) {
     const gameId = message.key.remoteJid;
     const game = activeGames[gameId];
@@ -1204,7 +1197,7 @@ async function handleGameAnswer(sock, message) {
     return false;
 }
 
-// 26. Hint
+// Fungsi Hint
 async function hintCommand(sock, message) {
     const gameId = message.key.remoteJid;
     const game = activeGames[gameId];
@@ -1239,7 +1232,7 @@ async function hintCommand(sock, message) {
     });
 }
 
-// --- FUNGSI UTAMA BOT ---
+// Fungsi Utama Bot
 async function startBot() {
     console.log('🚀 Memulai bot WhatsApp...');
 
