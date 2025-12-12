@@ -1,331 +1,281 @@
-// Lanjutan dari npmCommand...
-    const packageQuery = text.split(' ')[1];
-    if (!packageQuery) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan nama package NPM!\nContoh: .npm baileys' });
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage } from '@jkt48connect-corp/baileys-lite';
+import { Boom } from '@hapi/boom';
+import qrcode from 'qrcode-terminal';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import axios from 'axios';
+import fs from 'fs/promises';
+import os from 'os';
+import sqlite3 from 'sqlite3';
+import ffmpeg from 'fluent-ffmpeg';
 
-    try {
-        const { data } = await axios.get(`https://registry.npmjs.org/${packageQuery}`, { timeout: 10000 });
-        const latest = data['dist-tags'].latest;
-        const versionData = data.versions[latest];
-        
-        const resultText = `*NPM Package Info*\n\n📦 *Nama:* ${data.name}\nv *Versi:* ${latest}\n📜 *Deskripsi:* ${data.description || '-'}\nsed *Lisensi:* ${data.license || '-'}\n👤 *Author:* ${data.author?.name || '-'}\n🏠 *Homepage:* ${data.homepage || '-'}`;
-        
-        await sock.sendMessage(message.key.remoteJid, { text: resultText });
-    } catch (error) {
-        await sock.sendMessage(message.key.remoteJid, { text: '❌ Package tidak ditemukan.' });
-    }
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const ownerNumber = '6285929088764@s.whatsapp.net';
+const botPrefix = '.';
+let selfMode = false;
+
+const sessionId = process.env.RAILWAY_SERVICE_NAME || 'session_default';
+const dbPath = path.join('/tmp', 'verified_users.db');
+const authPath = path.join(__dirname, 'auth_info_' + sessionId);
+const tempDir = path.join('/tmp', 'bot_temp');
+
+try {
+    await fs.mkdir(tempDir, { recursive: true });
+    console.log('✅ Direktori temporary siap');
+} catch (error) {
+    console.log('Direktori temporary sudah ada');
 }
 
-// 16. Fitur Cek (Fun)
-async function cekFunCommand(sock, message, text, type) {
-    const mentions = parseMention(text);
-    const target = mentions.length > 0 ? mentions[0] : (message.key.participant || message.key.remoteJid);
-    const percentage = Math.floor(Math.random() * 101);
-    
-    let title = '';
-    switch(type) {
-        case 'iman': title = 'Tingkat Keimanan'; break;
-        case 'femboy': title = 'Tingkat Femboy'; break;
-        case 'furry': title = 'Tingkat Furry'; break;
-        case 'jamet': title = 'Tingkat Kejametan'; break;
-    }
-    
-    await sock.sendMessage(message.key.remoteJid, {
-        text: `📊 *${title}*\nTarget: @${target.split('@')[0]}\nHasil: ${percentage}%`,
-        mentions: [target]
+const db = new sqlite3.Database(dbPath);
+db.serialize(() => {
+    db.run('CREATE TABLE IF NOT EXISTS verified_users (jid TEXT PRIMARY KEY)');
+    console.log('✅ Database siap');
+});
+
+function isUserVerified(jid) {
+    return new Promise((resolve, reject) => {
+        db.get('SELECT jid FROM verified_users WHERE jid = ?', [jid], (err, row) => {
+            if (err) reject(err);
+            else resolve(!!row);
+        });
     });
 }
 
-// 17. Game: Tebak Kata
-async function tebakkataCommand(sock, message) {
-    const chatId = message.key.remoteJid;
-    if (activeGames[chatId]) return sock.sendMessage(chatId, { text: 'Masih ada game yang berjalan di chat ini!' });
-    
-    const index = Math.floor(Math.random() * tebakkataData.length);
-    const soal = tebakkataData[index];
-    
-    activeGames[chatId] = {
-        type: 'tebakkata',
-        jawaban: soal.jawab.toLowerCase(),
-        waktu: setTimeout(() => {
-            if (activeGames[chatId]) {
-                sock.sendMessage(chatId, { text: `Waktu habis! Jawabannya adalah: *${soal.jawab}*` });
-                delete activeGames[chatId];
-            }
-        }, 60000) // 60 detik
-    };
-    
-    await sock.sendMessage(chatId, { text: `🎮 *TEBAK KATA*\n\nPetunjuk: ${soal.soal}\n\nWaktu: 60 detik!` });
+function addUserToDatabase(jid) {
+    return new Promise((resolve, reject) => {
+        db.run('INSERT OR IGNORE INTO verified_users (jid) VALUES (?)', [jid], function(err) {
+            if (err) reject(err);
+            else resolve();
+        });
+    });
 }
 
-// 18. Game: Math Quiz
-async function mathquizCommand(sock, message) {
-    const chatId = message.key.remoteJid;
-    if (activeGames[chatId]) return sock.sendMessage(chatId, { text: 'Masih ada game yang berjalan di chat ini!' });
-    
-    const a = Math.floor(Math.random() * 50);
-    const b = Math.floor(Math.random() * 50);
-    const ops = ['+', '-', '*'];
-    const op = ops[Math.floor(Math.random() * ops.length)];
-    const result = eval(`${a} ${op} ${b}`);
-    
-    activeGames[chatId] = {
-        type: 'math',
-        jawaban: result.toString(),
-        waktu: setTimeout(() => {
-            if (activeGames[chatId]) {
-                sock.sendMessage(chatId, { text: `Waktu habis! Jawabannya adalah: *${result}*` });
-                delete activeGames[chatId];
-            }
-        }, 30000)
-    };
-    
-    await sock.sendMessage(chatId, { text: `🧠 *MATH QUIZ*\n\nBerapa hasil dari: ${a} ${op} ${b}?\n\nWaktu: 30 detik!` });
-}
+async function startBot() {
+    console.log('🚀 Menyalakan bot WhatsApp...');
 
-// 19. Game: Tebak Angka
-async function tebakangkaCommand(sock, message) {
-    const chatId = message.key.remoteJid;
-    if (activeGames[chatId]) return sock.sendMessage(chatId, { text: 'Masih ada game yang berjalan di chat ini!' });
-    
-    const angka = Math.floor(Math.random() * 10) + 1; // 1-10 biar gampang
-    
-    activeGames[chatId] = {
-        type: 'tebakangka',
-        jawaban: angka.toString(),
-        waktu: setTimeout(() => {
-            if (activeGames[chatId]) {
-                sock.sendMessage(chatId, { text: `Waktu habis! Angkanya adalah: *${angka}*` });
-                delete activeGames[chatId];
-            }
-        }, 30000)
-    };
-    
-    await sock.sendMessage(chatId, { text: `🔢 *TEBAK ANGKA*\n\nTebak angka dari 1 sampai 10!\n\nWaktu: 30 detik!` });
-}
-
-// --- MAIN HANDLER (Logic Utama) ---
-async function handleMessage(sock, message) {
     try {
-        if (!message.message) return;
-        
-        const msgType = Object.keys(message.message)[0];
-        const chatId = message.key.remoteJid;
-        const senderJid = message.key.participant || chatId;
-        const isMe = message.key.fromMe;
-        
-        // Skip pesan status/broadcast
-        if (chatId === 'status@broadcast') return;
-        
-        // Ekstrak text body
-        let body = extractMessageText(message);
-        if (!body) return;
-        
-        // Auto Verify Owner (Prioritas)
-        await autoVerifyOwner(senderJid);
-        
-        // --- LOGIC JAWABAN GAME ---
-        if (activeGames[chatId]) {
-            const game = activeGames[chatId];
-            if (body.toLowerCase() === game.jawaban) {
-                clearTimeout(game.waktu);
-                delete activeGames[chatId];
-                await sock.sendMessage(chatId, { text: `🎉 *BENAR!*\nSelamat @${senderJid.split('@')[0]} berhasil menjawab!`, mentions: [senderJid] }, { quoted: message });
+        const { state, saveCreds } = await useMultiFileAuthState(authPath);
+        const { version } = await fetchLatestBaileysVersion();
+        console.log(`📱 Menggunakan WA Web v${version.join('.')}`);
+
+        const sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: true,
+            defaultStoreOptions: { syncHistory: false },
+            markOnlineOnConnect: true,
+            syncFullHistory: false,
+            retryRequestDelayMs: 1000,
+            maxMsgRetryCount: 3,
+            connectTimeoutMs: 60000,
+            keepAliveIntervalMs: 30000,
+            mobile: false
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+
+            if (qr) {
+                console.log('📲 Scan QR code di bawah dengan WhatsApp Anda:');
+                qrcode.generate(qr, { small: true });
+            }
+
+            if (connection === 'close') {
+                const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+                console.log(`❌ Koneksi terputus. Kode: ${statusCode}`);
+
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log('📵 Logged out, menghapus session...');
+                    try {
+                        await fs.rm(authPath, { recursive: true, force: true });
+                        console.log('🗑️ Session dihapus. Silakan scan QR lagi.');
+                    } catch (e) {
+                        console.log('⚠️ Gagal hapus session:', e.message);
+                    }
+                }
+
+                if (statusCode !== DisconnectReason.loggedOut) {
+                    console.log('🔄 Mencoba sambung ulang dalam 15 detik...');
+                    setTimeout(() => {
+                        console.log('🔁 Menyambung ulang...');
+                        startBot();
+                    }, 15000);
+                }
+            } else if (connection === 'open') {
+                console.log('✅ Bot berhasil terhubung!');
+                console.log(`👤 Bot ID: ${sock.user?.id}`);
+            }
+        });
+
+        sock.ev.on('messages.upsert', async ({ messages }) => {
+            const msg = messages[0];
+            if (!msg.message || msg.key.fromMe) return;
+
+            const senderJid = msg.key.participant || msg.key.remoteJid;
+            let messageText = '';
+
+            if (msg.message.conversation) messageText = msg.message.conversation;
+            else if (msg.message.extendedTextMessage) messageText = msg.message.extendedTextMessage.text;
+            else if (msg.message.imageMessage) messageText = msg.message.imageMessage?.caption || '';
+            else if (msg.message.videoMessage) messageText = msg.message.videoMessage?.caption || '';
+
+            console.log(`📩 Pesan dari ${senderJid}: ${messageText.substring(0, 50)}...`);
+
+            if (!messageText.startsWith(botPrefix)) return;
+
+            const isVerified = await isUserVerified(senderJid);
+            if (!isVerified && !messageText.startsWith('.verify')) {
+                return sock.sendMessage(msg.key.remoteJid, { text: '❌ Kamu belum terverifikasi.\nKetik *.verify* dulu.' });
+            }
+
+            if (selfMode && senderJid !== ownerNumber) {
+                console.log(`🔒 Self mode aktif, blokir: ${senderJid}`);
                 return;
             }
-        }
 
-        // Cek Prefix
-        if (!body.startsWith(botPrefix)) return;
-        
-        const command = body.slice(botPrefix.length).trim().split(' ')[0].toLowerCase();
-        const text = body.slice(botPrefix.length + command.length).trim();
-        
-        console.log(`Command: ${command} from ${senderJid} in ${chatId}`);
+            const command = messageText.toLowerCase().trim().split(/ +/)[0];
 
-        // Cek Self Mode
-        if (selfMode && !isOwner(senderJid)) return;
+            try {
+                switch (command) {
+                    case '.menu':
+                        const uptime = process.uptime();
+                        const hours = Math.floor(uptime / 3600);
+                        const minutes = Math.floor((uptime % 3600) / 60);
+                        const seconds = Math.floor(uptime % 60);
+                        const menuText = `
+╭━━━━━━━━━━━━━━━━━━━━╮
+│   WINDIBOT MENU    │
+├────────────────────┤
+│ • .menu - Menu ini
+│ • .ping - Cek bot
+│ • .owner - Info owner
+│ • .stiker - Buat stiker
+│ • .tiktok <url> - Download
+╰━━━━━━━━━━━━━━━━━━━━╯
+                        `;
+                        await sock.sendMessage(msg.key.remoteJid, { text: menuText });
+                        break;
 
-        // Cek Verifikasi (Kecuali command verify & help & menu)
-        if (!['verify', 'menu', 'help'].includes(command)) {
-            const verified = await isUserVerified(senderJid);
-            if (!verified) {
-                return sock.sendMessage(chatId, { text: '⚠️ Kamu belum terverifikasi.\nKetik *.verify* untuk mulai menggunakan bot.' });
+                    case '.verify':
+                        if (senderJid === ownerNumber) {
+                            await sock.sendMessage(msg.key.remoteJid, { text: '✅ Owner otomatis terverifikasi!' });
+                        } else {
+                            await addUserToDatabase(senderJid);
+                            await sock.sendMessage(msg.key.remoteJid, { text: '✅ Verifikasi berhasil!' });
+                        }
+                        break;
+
+                    case '.ping':
+                        await sock.sendMessage(msg.key.remoteJid, { text: '🏓 Pong! Bot aktif.' });
+                        break;
+
+                    case '.owner':
+                        await sock.sendMessage(msg.key.remoteJid, { text: `👑 Owner bot: ${ownerNumber}\nJangan spam ya!` });
+                        break;
+
+                    case '.stiker':
+                        try {
+                            const msgType = Object.keys(msg.message)[0];
+                            let mediaBuffer;
+                            let isVideo = false;
+
+                            if (msgType === 'imageMessage') {
+                                const stream = await downloadContentFromMessage(msg.message.imageMessage, 'image');
+                                const chunks = [];
+                                for await (const chunk of stream) chunks.push(chunk);
+                                mediaBuffer = Buffer.concat(chunks);
+                            } else if (msgType === 'videoMessage') {
+                                const stream = await downloadContentFromMessage(msg.message.videoMessage, 'video');
+                                const chunks = [];
+                                for await (const chunk of stream) chunks.push(chunk);
+                                mediaBuffer = Buffer.concat(chunks);
+                                isVideo = true;
+                            } else {
+                                return sock.sendMessage(msg.key.remoteJid, { text: '❌ Balas gambar/video dengan caption .stiker' });
+                            }
+
+                            const tempInput = path.join(tempDir, `input_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`);
+                            const tempOutput = path.join(tempDir, `sticker_${Date.now()}.webp`);
+
+                            await fs.writeFile(tempInput, mediaBuffer);
+
+                            await new Promise((resolve, reject) => {
+                                ffmpeg(tempInput)
+                                    .outputOptions([
+                                        '-vcodec', 'libwebp',
+                                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000',
+                                        '-lossless', '0',
+                                        '-quality', '80',
+                                        '-preset', 'default',
+                                        '-loop', '0',
+                                        '-an',
+                                        '-vsync', '0'
+                                    ])
+                                    .toFormat('webp')
+                                    .on('end', resolve)
+                                    .on('error', reject)
+                                    .save(tempOutput);
+                            });
+
+                            const stickerBuffer = await fs.readFile(tempOutput);
+                            await sock.sendMessage(msg.key.remoteJid, { sticker: stickerBuffer });
+                            await fs.unlink(tempInput).catch(() => {});
+                            await fs.unlink(tempOutput).catch(() => {});
+                        } catch (error) {
+                            console.error('Stiker error:', error);
+                            await sock.sendMessage(msg.key.remoteJid, { text: '❌ Gagal buat stiker.' });
+                        }
+                        break;
+
+                    case '.tiktok':
+                        const url = messageText.split(' ')[1];
+                        if (!url) return sock.sendMessage(msg.key.remoteJid, { text: 'Kirim link TikTok!\nContoh: .tiktok https://vt.tiktok.com/xxx' });
+
+                        try {
+                            await sock.sendMessage(msg.key.remoteJid, { text: '⏳ Sedang download dari TikTok...' });
+                            const apiUrl = `https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`;
+                            const response = await axios.get(apiUrl, { timeout: 30000 });
+                            const data = response.data;
+
+                            if (data.videos && data.videos[0]) {
+                                const videoUrl = data.videos[0];
+                                await sock.sendMessage(msg.key.remoteJid, {
+                                    video: { url: videoUrl },
+                                    caption: `*TikTok Downloader*\n\n🎵 ${data.title || 'Tanpa judul'}`
+                                });
+                            } else {
+                                throw new Error('Video tidak ditemukan');
+                            }
+                        } catch (error) {
+                            console.error('TikTok error:', error);
+                            await sock.sendMessage(msg.key.remoteJid, { text: '❌ Gagal download. Coba link lain.' });
+                        }
+                        break;
+
+                    default:
+                        await sock.sendMessage(msg.key.remoteJid, { text: `❌ Perintah "${command}" tidak dikenal. Ketik .menu` });
+                        break;
+                }
+            } catch (error) {
+                console.error(`Error command ${command}:`, error);
+                await sock.sendMessage(msg.key.remoteJid, { text: '❌ Maaf, terjadi kesalahan internal.' });
             }
-        }
+        });
 
-        // --- SWITCH COMMAND ---
-        switch (command) {
-            case 'menu':
-            case 'help':
-                await showMenu(sock, message);
-                break;
-                
-            case 'verify':
-                await verifyCommand(sock, message);
-                break;
-                
-            case 'self':
-                await selfCommand(sock, message);
-                break;
-                
-            case 'unself':
-                await unselfCommand(sock, message);
-                break;
-
-            // Downloader
-            case 'tiktok':
-            case 'tt':
-                await tiktokCommand(sock, message, body);
-                break;
-            case 'ig':
-            case 'instagram':
-                await igCommand(sock, message, body);
-                break;
-            case 'yt':
-            case 'youtube':
-                await ytCommand(sock, message, body);
-                break;
-            case 'stiker':
-            case 's':
-            case 'sticker':
-                await stikerCommand(sock, message, text);
-                break;
-            case 'tostiker':
-            case 'tosticker':
-                await tostikerCommand(sock, message);
-                break;
-            case 'tomedia':
-            case 'toimg':
-                await tomediaCommand(sock, message);
-                break;
-
-            // Group
-            case 'grup':
-            case 'group':
-                await grupCommand(sock, message, text);
-                break;
-            case 'totag':
-            case 'tagall':
-                await totagCommand(sock, message, text);
-                break;
-            case 'kick':
-                await kickCommand(sock, message, text);
-                break;
-            case 'ban':
-                await banCommand(sock, message, text);
-                break;
-
-            // Info
-            case 'github':
-            case 'gh':
-                await githubCommand(sock, message, body);
-                break;
-            case 'npm':
-                await npmCommand(sock, message, body);
-                break;
-
-            // Fun Checks
-            case 'cekiman':
-                await cekFunCommand(sock, message, text, 'iman');
-                break;
-            case 'cekfemboy':
-                await cekFunCommand(sock, message, text, 'femboy');
-                break;
-            case 'cekfurry':
-                await cekFunCommand(sock, message, text, 'furry');
-                break;
-            case 'cekjamet':
-                await cekFunCommand(sock, message, text, 'jamet');
-                break;
-
-            // Games
-            case 'tebakkata':
-                await tebakkataCommand(sock, message);
-                break;
-            case 'mathquiz':
-            case 'math':
-                await mathquizCommand(sock, message);
-                break;
-            case 'tebakangka':
-                await tebakangkaCommand(sock, message);
-                break;
-
-            // Owner Tools
-            case 'apistatus':
-                if (!isOwner(senderJid)) return;
-                await sock.sendMessage(chatId, { text: '✅ API Status: Online' });
-                break;
-            case 'log':
-                if (!isOwner(senderJid)) return;
-                await sock.sendMessage(chatId, { text: '✅ System berjalan normal.' });
-                break;
-                
-            default:
-                // Command tidak dikenal, abaikan
-                break;
-        }
+        console.log('🎉 Bot siap menerima pesan!');
 
     } catch (error) {
-        console.error('Error in message handler:', error);
+        console.error('❌ Error setup bot:', error.message);
+        console.log('🔄 Restart dalam 10 detik...');
+        setTimeout(startBot, 10000);
     }
 }
 
-// --- KONEKSI UTAMA ---
-async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState(authPath);
-
-    const sock = makeWASocket({
-        printQRInTerminal: true,
-        auth: state,
-        logger: {
-            level: 'silent'
-        },
-        browser: ["WindBi Bot", "Chrome", "1.0.0"]
-    });
-
-    // Handle Connection Update
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('SCAN QR CODE INI UNTUK LOGIN:');
-        }
-
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)
-                ? lastDisconnect.error.output?.statusCode !== DisconnectReason.loggedOut
-                : true;
-            
-            console.log('Koneksi terputus. Reconnecting:', shouldReconnect);
-            
-            if (shouldReconnect) {
-                startBot();
-            } else {
-                console.log('Session Logout. Hapus folder auth dan scan ulang.');
-            }
-        } else if (connection === 'open') {
-            console.log('✅ Bot berhasil terhubung ke WhatsApp!');
-            
-            // Kirim pesan notif ke owner
-            const cleanOwner = ownerNumber.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-            try {
-                await sock.sendMessage(cleanOwner, { text: '🤖 WindBi Bot telah aktif dan terhubung!' });
-            } catch (e) {}
-        }
-    });
-
-    // Handle Creds Update
-    sock.ev.on('creds.update', saveCreds);
-
-    // Handle Incoming Messages
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type === 'notify') {
-            for (const msg of messages) {
-                await handleMessage(sock, msg);
-            }
-        }
-    });
-}
-
-// --- START ---
-startBot().catch(err => console.error('Error starting bot:', err));
+startBot().catch(err => {
+    console.error("💥 Fatal error:", err.message);
+    setTimeout(startBot, 15000);
+});
