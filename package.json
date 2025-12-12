@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-bot-railway",
-  "version": "3.0.0",
-  "description": "Bot WhatsApp untuk Railway dengan ffmpeg",
+  "version": "4.0.0",
+  "description": "Bot WhatsApp untuk Railway dengan semua fitur",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "bot",
     "whatsapp",
     "baileys",
-    "ffmpeg"
+    "sticker",
+    "converter"
   ],
   "author": "humpreyDev",
   "license": "ISC",
