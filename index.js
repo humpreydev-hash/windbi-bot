@@ -1,8 +1,15 @@
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, MessageType, makeInMemoryStore } = require('@whiskeysockets/baileys');
-const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const path = require('path');
-require('dotenv').config();
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore } from '@whiskeysockets/baileys';
+import qrcode from 'qrcode-terminal';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Store untuk menyimpan pesan
 const store = makeInMemoryStore({});
@@ -35,13 +42,13 @@ async function connectToWhatsApp() {
             const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('Connection closed due to:', lastDisconnect.error, ', reconnecting:', shouldReconnect);
             if (shouldReconnect) {
-                connectToWhatsApp();
+                setTimeout(() => connectToWhatsApp(), 3000);
             }
         } else if (connection === 'open') {
             console.log('✅ Bot connected successfully!');
             console.log('🤖 Bot is ready to receive messages');
             
-            // Kiram pesan sambutan ke admin
+            // Kirim pesan sambutan ke admin
             const adminNumber = process.env.ADMIN_NUMBER;
             if (adminNumber) {
                 setTimeout(() => {
