@@ -1,4 +1,4 @@
-import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage, Browsers } from '@whiskeysockets/baileys';
+import { makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import path from 'path';
@@ -8,6 +8,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import osUtils from 'os-utils';
 import sqlite3 from 'sqlite3';
+import ffmpeg from 'fluent-ffmpeg';
+import sharp from 'sharp';
 
 // --- PENYESUAIAN UNTUK ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -121,6 +123,118 @@ async function autoVerifyOwner(jid) {
     }
     return false;
 }
+
+// Fungsi untuk konversi WebP ke PNG menggunakan sharp
+async function convertWebpToPng(webpBuffer) {
+    try {
+        return await sharp(webpBuffer)
+            .png()
+            .toBuffer();
+    } catch (error) {
+        console.error('Error converting WebP to PNG:', error);
+        throw error;
+    }
+}
+
+// Fungsi untuk membuat sticker dari gambar
+async function createStickerFromImage(imageBuffer) {
+    try {
+        // Resize image untuk sticker
+        const resizedImage = await sharp(imageBuffer)
+            .resize(512, 512, {
+                fit: 'contain',
+                background: { r: 0, g: 0, b: 0, alpha: 0 }
+            })
+            .webp()
+            .toBuffer();
+        
+        return resizedImage;
+    } catch (error) {
+        console.error('Error creating sticker from image:', error);
+        throw error;
+    }
+}
+
+// Fungsi untuk membuat sticker dari video
+async function createStickerFromVideo(videoBuffer) {
+    return new Promise((resolve, reject) => {
+        const tempInput = path.join(tempDir, `video_input_${Date.now()}.mp4`);
+        const tempOutput = path.join(tempDir, `sticker_output_${Date.now()}.webp`);
+        
+        // Tulis buffer ke file sementara
+        fs.writeFile(tempInput, videoBuffer)
+            .then(() => {
+                // Konversi video ke WebP menggunakan ffmpeg
+                ffmpeg(tempInput)
+                    .inputOptions(['-f', 'mp4'])
+                    .outputOptions([
+                        '-vcodec', 'libwebp',
+                        '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,fps=10',
+                        '-loop', '0',
+                        '-preset', 'default',
+                        '-an',
+                        '-vsync', '0',
+                        '-s', '512:512'
+                    ])
+                    .toFormat('webp')
+                    .on('end', async () => {
+                        try {
+                            const outputBuffer = await fs.readFile(tempOutput);
+                            // Hapus file sementara
+                            await fs.unlink(tempInput).catch(() => {});
+                            await fs.unlink(tempOutput).catch(() => {});
+                            resolve(outputBuffer);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    })
+                    .on('error', (err) => {
+                        fs.unlink(tempInput).catch(() => {});
+                        fs.unlink(tempOutput).catch(() => {});
+                        reject(err);
+                    })
+                    .save(tempOutput);
+            })
+            .catch(reject);
+    });
+}
+
+// Fungsi untuk konversi WebP ke video (untuk sticker animated)
+async function convertWebpToVideo(webpBuffer) {
+    return new Promise((resolve, reject) => {
+        const tempInput = path.join(tempDir, `animated_input_${Date.now()}.webp`);
+        const tempOutput = path.join(tempDir, `video_output_${Date.now()}.mp4`);
+        
+        fs.writeFile(tempInput, webpBuffer)
+            .then(() => {
+                ffmpeg(tempInput)
+                    .outputOptions([
+                        '-c:v', 'libx264',
+                        '-pix_fmt', 'yuv420p',
+                        '-vf', 'scale=512:512',
+                        '-r', '10'
+                    ])
+                    .toFormat('mp4')
+                    .on('end', async () => {
+                        try {
+                            const outputBuffer = await fs.readFile(tempOutput);
+                            await fs.unlink(tempInput).catch(() => {});
+                            await fs.unlink(tempOutput).catch(() => {});
+                            resolve(outputBuffer);
+                        } catch (err) {
+                            reject(err);
+                        }
+                    })
+                    .on('error', (err) => {
+                        fs.unlink(tempInput).catch(() => {});
+                        fs.unlink(tempOutput).catch(() => {});
+                        reject(err);
+                    })
+                    .save(tempOutput);
+            })
+            .catch(reject);
+    });
+}
 // -------------------------
 
 // --- FUNGSI-FUNGSI FITUR ---
@@ -188,7 +302,7 @@ async function showMenu(sock, message) {
 │ • .yt <url>
 │ • .ig <url>
 │ • .tiktok <url>
-│ • .stiker <watermark>
+│ • .stiker
 │ • .tostiker
 │ • .tomedia
 ╰╼━━━━━━━━━━━━━━━━╾❏
@@ -294,11 +408,32 @@ async function igCommand(sock, message, text) {
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!\nContoh: .ig https://instagram.com/p/xxx' });
     
     try {
-        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Instagram downloader membutuhkan API key.\nSilakan gunakan service lain untuk download Instagram.' });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang memproses...' });
         
+        // Gunakan API instagram-scraper sederhana
+        const apiUrl = `https://www.instagram.com/p/${url.split('/').pop()}/?__a=1&__d=1`;
+        const response = await axios.get(apiUrl, { timeout: 30000 });
+        
+        if (response.data && response.data.graphql) {
+            const media = response.data.graphql.shortcode_media;
+            
+            if (media.is_video) {
+                await sock.sendMessage(message.key.remoteJid, {
+                    video: { url: media.video_url },
+                    caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.owner.username}`
+                });
+            } else {
+                await sock.sendMessage(message.key.remoteJid, {
+                    image: { url: media.display_url },
+                    caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.owner.username}`
+                });
+            }
+        } else {
+            throw new Error('Tidak bisa mengambil data');
+        }
     } catch (error) {
         console.error('Instagram download error:', error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Fitur Instagram download membutuhkan setup API.' });
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Coba link lain.' });
     }
 }
 
@@ -335,13 +470,14 @@ async function ytCommand(sock, message, text) {
     }
 }
 
-// 7. Sticker sederhana
+// 7. Sticker dengan sharp dan ffmpeg
 async function stikerCommand(sock, message, text) {
     try {
         const msgType = Object.keys(message.message)[0];
         const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
         
         let mediaBuffer;
+        let isVideo = false;
         
         if (isQuoted) {
             const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
@@ -357,6 +493,7 @@ async function stikerCommand(sock, message, text) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
+            isVideo = quotedType === 'videoMessage';
         } else {
             if (!['imageMessage', 'videoMessage'].includes(msgType)) {
                 return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .stiker' });
@@ -368,11 +505,22 @@ async function stikerCommand(sock, message, text) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
+            isVideo = msgType === 'videoMessage';
         }
         
-        // Kirim langsung sebagai sticker
+        let stickerBuffer;
+        
+        if (isVideo) {
+            // Convert video to animated sticker
+            stickerBuffer = await createStickerFromVideo(mediaBuffer);
+        } else {
+            // Convert image to sticker
+            stickerBuffer = await createStickerFromImage(mediaBuffer);
+        }
+        
+        // Kirim sticker
         await sock.sendMessage(message.key.remoteJid, {
-            sticker: mediaBuffer
+            sticker: stickerBuffer
         }, { quoted: message });
         
     } catch (error) {
@@ -388,6 +536,7 @@ async function tostikerCommand(sock, message) {
         const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
         
         let mediaBuffer;
+        let isVideo = false;
         
         if (isQuoted) {
             const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
@@ -403,6 +552,7 @@ async function tostikerCommand(sock, message) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
+            isVideo = quotedType === 'videoMessage';
         } else {
             if (!['imageMessage', 'videoMessage'].includes(msgType)) {
                 return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .tostiker' });
@@ -414,10 +564,19 @@ async function tostikerCommand(sock, message) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
+            isVideo = msgType === 'videoMessage';
+        }
+        
+        let stickerBuffer;
+        
+        if (isVideo) {
+            stickerBuffer = await createStickerFromVideo(mediaBuffer);
+        } else {
+            stickerBuffer = await createStickerFromImage(mediaBuffer);
         }
         
         await sock.sendMessage(message.key.remoteJid, {
-            sticker: mediaBuffer
+            sticker: stickerBuffer
         }, { quoted: message });
         
     } catch (error) {
@@ -426,7 +585,7 @@ async function tostikerCommand(sock, message) {
     }
 }
 
-// 9. To Media
+// 9. To Media (convert sticker to image/video)
 async function tomediaCommand(sock, message) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -452,18 +611,22 @@ async function tomediaCommand(sock, message) {
         for await (const chunk of stream) {
             chunks.push(chunk);
         }
-        const buffer = Buffer.concat(chunks);
+        const webpBuffer = Buffer.concat(chunks);
         
         const isAnimated = stickerMsg.isAnimated || false;
         
         if (isAnimated) {
+            // Convert animated WebP to video
+            const videoBuffer = await convertWebpToVideo(webpBuffer);
             await sock.sendMessage(message.key.remoteJid, {
-                video: buffer,
+                video: videoBuffer,
                 caption: 'Converted from animated sticker'
             }, { quoted: message });
         } else {
+            // Convert static WebP to PNG
+            const pngBuffer = await convertWebpToPng(webpBuffer);
             await sock.sendMessage(message.key.remoteJid, {
-                image: buffer,
+                image: pngBuffer,
                 caption: 'Converted from sticker'
             }, { quoted: message });
         }
@@ -1013,16 +1176,12 @@ async function startBot() {
             auth: state,
             printQRInTerminal: false,
             defaultStoreOptions: { syncHistory: false },
-            browser: Browsers.ubuntu('Chrome'),
             markOnlineOnConnect: true,
             syncFullHistory: false,
             retryRequestDelayMs: 1000,
             maxMsgRetryCount: 3,
             connectTimeoutMs: 60000,
-            keepAliveIntervalMs: 30000,
-            logger: {
-                level: 'silent'
-            }
+            keepAliveIntervalMs: 30000
         });
 
         sock.ev.on('creds.update', saveCreds);
