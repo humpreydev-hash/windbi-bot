@@ -1,3 +1,9 @@
+// FIX UNTUK RAILWAYS - TAMBAHKAN INI DI BARIS PERTAMA
+if (typeof globalThis.crypto === 'undefined') {
+    const webcrypto = require('crypto');
+    globalThis.crypto = webcrypto;
+}
+
 // Import package yang diperlukan
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
@@ -23,7 +29,11 @@ async function startBot() {
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: true,
-        defaultQueryTimeoutMs: 60 * 1000 // 60 detik
+        defaultQueryTimeoutMs: 60 * 1000,
+        // Tambahkan config untuk Railway
+        browser: ['Railway Bot', 'Chrome', '1.0.0'],
+        syncFullHistory: false,
+        markOnlineOnConnect: false
     });
 
     // Event ketika QR code digenerate
@@ -42,7 +52,9 @@ async function startBot() {
             console.log('Koneksi terputus, reconnecting...', shouldReconnect);
             
             if (shouldReconnect) {
-                startBot();
+                setTimeout(() => {
+                    startBot();
+                }, 5000); // Delay 5 detik sebelum reconnect
             }
         } else if (connection === 'open') {
             console.log('✅ Bot berhasil terhubung!');
@@ -85,6 +97,16 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
+// Handle uncaught errors (untuk Railway)
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // Mulai bot
-console.log('🚀 Starting WhatsApp Bot...');
+console.log('🚀 Starting WhatsApp Bot on Railway...');
+console.log('Node version:', process.version);
 startBot().catch(console.error);
