@@ -1,12 +1,12 @@
 {
   "name": "whatsapp-bot-railway",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Bot WhatsApp untuk Railway dengan fitur converter media",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "postinstall": "apt-get update && apt-get install -y ffmpeg"
+    "postinstall": "apt-get update && apt-get install -y ffmpeg libvips-dev"
   },
   "keywords": [
     "bot",
@@ -18,14 +18,14 @@
   "author": "humpreyDev",
   "license": "ISC",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.5.0",
+    "@whiskeysockets/baileys": "6.5.0",
     "@hapi/boom": "^10.0.1",
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.2",
     "sqlite3": "^5.1.6",
     "os-utils": "^0.0.14",
     "fluent-ffmpeg": "^2.1.2",
-    "sharp": "^0.33.3"
+    "sharp": "0.32.6"
   },
   "engines": {
     "node": ">=18.0.0"
