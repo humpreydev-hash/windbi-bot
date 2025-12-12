@@ -1,7 +1,7 @@
 {
-  "name": "windbi-bot-whatsapp",
+  "name": "windbi-bot",
   "version": "1.0.0",
-  "description": "Bot WhatsApp dengan fitur lengkap menggunakan Node.js",
+  "description": "WhatsApp Bot Simple menggunakan Baileys Library",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -12,20 +12,24 @@
     "whatsapp",
     "bot",
     "baileys",
-    "nodejs"
+    "nodejs",
+    "automation"
   ],
-  "author": "humpreyDev",
-  "license": "MIT",
+  "author": "WindBi",
+  "license": "ISC",
   "dependencies": {
     "@hapi/boom": "^10.0.1",
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "^6.7.5",
     "axios": "^1.6.8",
     "fluent-ffmpeg": "^2.1.2",
     "os-utils": "^0.0.14",
     "qrcode-terminal": "^0.12.0",
-    "sqlite3": "^5.1.6"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
