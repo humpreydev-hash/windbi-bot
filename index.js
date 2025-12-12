@@ -9,10 +9,6 @@ import os from 'os';
 import osUtils from 'os-utils';
 import sqlite3 from 'sqlite3';
 import { readFile, writeFile, unlink } from 'fs/promises';
-import ffmpeg from 'fluent-ffmpeg';
-import webp from 'webp-converter';
-import ytdl from '@distube/ytdl-core';
-import search from 'youtube-search-api';
 
 // --- PENYESUAIAN UNTUK ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -119,41 +115,6 @@ async function autoVerifyOwner(jid) {
     }
     return false;
 }
-
-// Fungsi download dengan axios untuk stability
-async function downloadMedia(url, options = {}) {
-    try {
-        const response = await axios({
-            url,
-            method: 'GET',
-            responseType: 'stream',
-            timeout: 30000,
-            ...options
-        });
-        
-        const chunks = [];
-        for await (const chunk of response.data) {
-            chunks.push(chunk);
-        }
-        return Buffer.concat(chunks);
-    } catch (error) {
-        console.error('Download media error:', error);
-        throw error;
-    }
-}
-
-// Fungsi untuk handle session error
-function clearSessionIfNeeded() {
-    const sessionFiles = ['creds.json', 'pre-key.json', 'sender-key.json', 'session.json'];
-    sessionFiles.forEach(file => {
-        const filePath = path.join(authPath, file);
-        try {
-            if (fs.existsSync(filePath)) {
-                console.log(`Found session file: ${file}`);
-            }
-        } catch (e) {}
-    });
-}
 // -------------------------
 
 // --- FUNGSI-FUNGSI FITUR ---
@@ -241,22 +202,11 @@ async function showMenu(sock, message) {
 `;
     
     try {
-        // Kirim gambar jika ada
-        const menuImagePath = path.join(__dirname, 'menu.png');
-        try {
-            await fs.access(menuImagePath);
-            const imageBuffer = await fs.readFile(menuImagePath);
-            await sock.sendMessage(message.key.remoteJid, {
-                image: imageBuffer,
-                caption: menuText
-            });
-        } catch {
-            // Jika gambar tidak ada, kirim teks saja
-            await sock.sendMessage(message.key.remoteJid, { text: menuText });
-        }
+        // Kirim teks menu saja (tanpa gambar karena webp-converter error)
+        await sock.sendMessage(message.key.remoteJid, { text: menuText });
     } catch (error) {
         console.error('Error sending menu:', error);
-        await sock.sendMessage(message.key.remoteJid, { text: menuText });
+        await sock.sendMessage(message.key.remoteJid, { text: 'Menu bot:\n.menu - Tampilkan menu\n.verify - Verifikasi\n.help - Bantuan' });
     }
 }
 
@@ -299,7 +249,7 @@ async function unselfCommand(sock, message) {
     return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self dinonaktifkan.' });
 }
 
-// 4. TikTok Downloader dengan API
+// 4. TikTok Downloader dengan API publik
 async function tiktokCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link TikToknya!\nContoh: .tiktok https://vt.tiktok.com/xxx' });
@@ -307,18 +257,17 @@ async function tiktokCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload dari TikTok...' });
         
-        // Gunakan API TikTok downloader
+        // Gunakan API TikTok downloader publik
         const apiUrl = `https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`;
         const response = await axios.get(apiUrl, { timeout: 30000 });
         const data = response.data;
         
         if (data.videos && data.videos[0]) {
             const videoUrl = data.videos[0];
-            const videoBuffer = await downloadMedia(videoUrl);
             
             await sock.sendMessage(message.key.remoteJid, {
-                video: videoBuffer,
-                caption: `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title || 'Tanpa judul'}\n👤 *Author:* ${data.author.nickname || 'Unknown'}`
+                video: { url: videoUrl },
+                caption: `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title || 'Tanpa judul'}\n👤 *Author:* ${data.author?.nickname || 'Unknown'}`
             });
         } else {
             throw new Error('Video tidak ditemukan');
@@ -329,69 +278,57 @@ async function tiktokCommand(sock, message, text) {
     }
 }
 
-// 5. Instagram Downloader dengan API
+// 5. Instagram Downloader dengan API sederhana
 async function igCommand(sock, message, text) {
     const url = text.split(' ')[1];
     if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!\nContoh: .ig https://instagram.com/p/xxx' });
     
     try {
-        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload dari Instagram...' });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang memproses link Instagram...' });
         
-        // Gunakan API Instagram downloader
+        // Gunakan API sederhana
         const apiUrl = `https://instagram-scraper-api2.p.rapidapi.com/v1/media_info?url=${encodeURIComponent(url)}`;
-        const response = await axios.get(apiUrl, {
-            headers: {
-                'X-RapidAPI-Key': 'your-rapidapi-key', // Ganti dengan API key sendiri
-                'X-RapidAPI-Host': 'instagram-scraper-api2.p.rapidapi.com'
-            },
-            timeout: 30000
-        });
-        
-        const data = response.data;
-        if (data.items && data.items[0]) {
-            const media = data.items[0];
+        try {
+            const response = await axios.get(apiUrl, {
+                headers: {
+                    'X-RapidAPI-Key': 'your-api-key-here', // Ganti dengan API key sendiri
+                    'X-RapidAPI-Host': 'instagram-scraper-api2.p.rapidapi.com'
+                },
+                timeout: 30000
+            });
             
-            if (media.media_type === 1) { // Image
-                const imageBuffer = await downloadMedia(media.image_versions2.candidates[0].url);
-                await sock.sendMessage(message.key.remoteJid, {
-                    image: imageBuffer,
-                    caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.user.username}`
-                });
-            } else if (media.media_type === 2) { // Video
-                const videoBuffer = await downloadMedia(media.video_versions[0].url);
-                await sock.sendMessage(message.key.remoteJid, {
-                    video: videoBuffer,
-                    caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.user.username}`
-                });
-            } else if (media.media_type === 8) { // Carousel
-                for (const item of media.carousel_media) {
-                    if (item.media_type === 1) {
-                        const imageBuffer = await downloadMedia(item.image_versions2.candidates[0].url);
-                        await sock.sendMessage(message.key.remoteJid, { image: imageBuffer });
-                    } else if (item.media_type === 2) {
-                        const videoBuffer = await downloadMedia(item.video_versions[0].url);
-                        await sock.sendMessage(message.key.remoteJid, { video: videoBuffer });
-                    }
+            const data = response.data;
+            if (data.items && data.items[0]) {
+                const media = data.items[0];
+                
+                if (media.media_type === 1) { // Image
+                    await sock.sendMessage(message.key.remoteJid, {
+                        image: { url: media.image_versions2.candidates[0].url },
+                        caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.user.username}`
+                    });
+                } else if (media.media_type === 2) { // Video
+                    await sock.sendMessage(message.key.remoteJid, {
+                        video: { url: media.video_versions[0].url },
+                        caption: `*Instagram Downloader*\n\n👤 *Author:* ${media.user.username}`
+                    });
                 }
-                await sock.sendMessage(message.key.remoteJid, {
-                    text: `*Instagram Downloader*\n\n👤 *Author:* ${media.user.username}`
-                });
             }
+        } catch (apiError) {
+            // Fallback ke metode lain
+            console.log('Menggunakan fallback Instagram...');
+            const fallbackApi = `https://www.instagram.com/p/${url.split('/').pop()}/?__a=1&__d=1`;
+            await axios.get(fallbackApi);
+            return sock.sendMessage(message.key.remoteJid, { 
+                text: '❌ Instagram download membutuhkan API key.\nSilakan tambahkan API key RapidAPI di kode.' 
+            });
         }
     } catch (error) {
         console.error('Instagram download error:', error);
-        // Fallback ke API lain
-        try {
-            const fallbackApi = `https://api.instagram.com/oembed/?url=${encodeURIComponent(url)}`;
-            await axios.get(fallbackApi);
-            return sock.sendMessage(message.key.remoteJid, { text: '❌ Link valid tapi download terhalang. Coba manual.' });
-        } catch {
-            return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar.' });
-        }
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar.' });
     }
 }
 
-// 6. YouTube Audio Downloader
+// 6. YouTube Audio Downloader sederhana
 async function playytCommand(sock, message, text) {
     const query = text.slice(8).trim();
     if (!query) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan judul lagu!\nContoh: .playyt Coldplay Adventure of a Lifetime' });
@@ -399,36 +336,22 @@ async function playytCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Mencari lagu...' });
         
-        // Search dengan youtube-search-api
-        const searchResult = await search.GetListByKeyword(query, false, 1);
-        if (!searchResult.items || searchResult.items.length === 0) {
+        // Search dengan YouTube API sederhana
+        const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+        const searchResponse = await axios.get(searchUrl);
+        
+        // Extract video ID dari response (sederhana)
+        const html = searchResponse.data;
+        const match = html.match(/videoId":"([^"]+)"/);
+        
+        if (!match) {
             return sock.sendMessage(message.key.remoteJid, { text: '❌ Lagu tidak ditemukan' });
         }
         
-        const videoId = searchResult.items[0].id;
+        const videoId = match[1];
         const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        const videoTitle = searchResult.items[0].title;
         
-        await sock.sendMessage(message.key.remoteJid, { text: `⏳ Mengunduh: ${videoTitle}` });
-        
-        // Download audio dengan ytdl
-        const stream = ytdl(videoUrl, {
-            filter: 'audioonly',
-            quality: 'highestaudio',
-        });
-        
-        const chunks = [];
-        for await (const chunk of stream) {
-            chunks.push(chunk);
-        }
-        const buffer = Buffer.concat(chunks);
-        
-        // Kirim audio
-        await sock.sendMessage(message.key.remoteJid, {
-            audio: buffer,
-            mimetype: 'audio/mpeg',
-            fileName: `${videoTitle.substring(0, 50)}.mp3`
-        });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Fitur playyt sedang dalam perbaikan.\nGunakan .yt <url> untuk download video.' });
         
     } catch (error) {
         console.error('YouTube audio error:', error);
@@ -444,39 +367,38 @@ async function ytCommand(sock, message, text) {
     try {
         await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mengunduh video...' });
         
-        const info = await ytdl.getInfo(url);
-        const format = ytdl.chooseFormat(info.formats, { quality: 'lowest' });
+        // Gunakan y2mate API
+        const apiUrl = `https://y2mate.guru/api/convert`;
+        const response = await axios.post(apiUrl, {
+            url: url,
+            format: 'mp4',
+            quality: '360p'
+        }, { timeout: 60000 });
         
-        if (!format) {
-            throw new Error('Format tidak ditemukan');
+        const data = response.data;
+        
+        if (data.url) {
+            await sock.sendMessage(message.key.remoteJid, {
+                video: { url: data.url },
+                caption: `*YouTube Downloader*\n\n📹 *Judul:* ${data.title || 'YouTube Video'}`
+            });
+        } else {
+            throw new Error('Download URL tidak ditemukan');
         }
-        
-        const stream = ytdl(url, { quality: format.itag });
-        const chunks = [];
-        for await (const chunk of stream) {
-            chunks.push(chunk);
-        }
-        const buffer = Buffer.concat(chunks);
-        
-        await sock.sendMessage(message.key.remoteJid, {
-            video: buffer,
-            caption: `*YouTube Downloader*\n\n📹 *Judul:* ${info.videoDetails.title}\n⏱️ *Durasi:* ${info.videoDetails.lengthSeconds} detik`
-        });
         
     } catch (error) {
         console.error('YouTube video error:', error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh video.' });
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh video. Coba link lain.' });
     }
 }
 
-// 8. Sticker dengan ffmpeg
+// 8. Sticker sederhana
 async function stikerCommand(sock, message, text) {
     try {
         const msgType = Object.keys(message.message)[0];
         const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
         
         let mediaBuffer;
-        let isVideo = false;
         
         if (isQuoted) {
             const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
@@ -492,7 +414,6 @@ async function stikerCommand(sock, message, text) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
-            isVideo = quotedType === 'videoMessage';
         } else {
             if (!['imageMessage', 'videoMessage'].includes(msgType)) {
                 return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .stiker' });
@@ -504,43 +425,12 @@ async function stikerCommand(sock, message, text) {
                 chunks.push(chunk);
             }
             mediaBuffer = Buffer.concat(chunks);
-            isVideo = msgType === 'videoMessage';
         }
         
-        const tempInput = path.join(tempDir, `input_${Date.now()}.${isVideo ? 'mp4' : 'jpg'}`);
-        const tempOutput = path.join(tempDir, `output_${Date.now()}.webp`);
-        
-        // Simpan buffer ke file
-        await fs.writeFile(tempInput, mediaBuffer);
-        
-        // Convert ke WebP
-        await new Promise((resolve, reject) => {
-            const cmd = ffmpeg(tempInput)
-                .outputOptions([
-                    '-vcodec', 'libwebp',
-                    '-vf', 'scale=512:512:force_original_aspect_ratio=decrease,format=rgba,pad=512:512:(ow-iw)/2:(oh-ih)/2:color=#00000000',
-                    '-loop', '0',
-                    '-preset', 'default',
-                    '-an',
-                    '-vsync', '0'
-                ])
-                .toFormat('webp')
-                .on('end', resolve)
-                .on('error', reject)
-                .save(tempOutput);
-        });
-        
-        // Baca file output
-        const stickerBuffer = await fs.readFile(tempOutput);
-        
-        // Kirim sticker
+        // Kirim langsung sebagai sticker (WhatsApp akan handle conversion)
         await sock.sendMessage(message.key.remoteJid, {
-            sticker: stickerBuffer
+            sticker: mediaBuffer
         }, { quoted: message });
-        
-        // Cleanup
-        await fs.unlink(tempInput).catch(() => {});
-        await fs.unlink(tempOutput).catch(() => {});
         
     } catch (error) {
         console.error('Sticker error:', error);
@@ -548,7 +438,7 @@ async function stikerCommand(sock, message, text) {
     }
 }
 
-// 9. To Sticker (simple version)
+// 9. To Sticker
 async function tostikerCommand(sock, message) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -583,7 +473,6 @@ async function tostikerCommand(sock, message) {
             mediaBuffer = Buffer.concat(chunks);
         }
         
-        // Kirim langsung sebagai sticker (WhatsApp handle conversion)
         await sock.sendMessage(message.key.remoteJid, {
             sticker: mediaBuffer
         }, { quoted: message });
@@ -594,7 +483,7 @@ async function tostikerCommand(sock, message) {
     }
 }
 
-// 10. To Media (simple version)
+// 10. To Media
 async function tomediaCommand(sock, message) {
     try {
         const msgType = Object.keys(message.message)[0];
@@ -622,7 +511,6 @@ async function tomediaCommand(sock, message) {
         }
         const buffer = Buffer.concat(chunks);
         
-        // Check if animated
         const isAnimated = stickerMsg.isAnimated || false;
         
         if (isAnimated) {
@@ -1171,7 +1059,6 @@ async function hintCommand(sock, message) {
 // --- FUNGSI UTAMA BOT ---
 async function startBot() {
     console.log('Memulai bot WhatsApp...');
-    clearSessionIfNeeded();
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -1190,7 +1077,7 @@ async function startBot() {
         connectTimeoutMs: 60000,
         keepAliveIntervalMs: 30000,
         logger: {
-            level: 'silent' // Kurangi log untuk mengurangi error
+            level: 'silent'
         }
     });
 
@@ -1210,7 +1097,6 @@ async function startBot() {
             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
             console.log(`Koneksi terputus. Status: ${statusCode}`);
             
-            // Jangan reconnect jika logged out
             if (statusCode !== DisconnectReason.loggedOut) {
                 console.log('Mencoba reconnect dalam 10 detik...');
                 setTimeout(() => {
@@ -1219,7 +1105,6 @@ async function startBot() {
                 }, 10000);
             } else {
                 console.log('Logged out, perlu scan QR lagi');
-                // Hapus session jika logged out
                 try {
                     await fs.rm(authPath, { recursive: true, force: true });
                     console.log('Session dihapus, silakan scan QR lagi');
@@ -1230,13 +1115,6 @@ async function startBot() {
         } else if (connection === 'open') {
             console.log('✅ Bot berhasil terhubung!');
             console.log(`Bot ID: ${sock.user?.id}`);
-        }
-    });
-
-    // Handle connection errors
-    sock.ev.on('connection.update', (update) => {
-        if (update.connection === 'close') {
-            console.log('Connection closed:', update.lastDisconnect?.error);
         }
     });
 
@@ -1267,7 +1145,7 @@ async function startBot() {
 
         const command = messageText.toLowerCase().trim().split(/ +/)[0];
 
-        // Verifikasi check (skip untuk owner)
+        // Verifikasi check
         const isVerified = await isUserVerified(senderJid);
         
         if (command !== '.verify' && !isVerified) {
