@@ -1,16 +1,15 @@
-import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage, jidDecode } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, downloadContentFromMessage } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
-import fetch from 'node-fetch';
 import ytdl from 'ytdl-core';
+import fs from 'fs/promises';
 import os from 'os';
 import osUtils from 'os-utils';
-import sqlite from 'sqlite3';
+import sqlite3 from 'sqlite3';
 import { readFile, writeFile, unlink } from 'fs/promises';
-import { existsSync } from 'fs';
 
 // --- PENYESUAIAN UNTUK ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -26,31 +25,46 @@ let selfMode = false; // State untuk mode self
 const sessionId = process.env.RAILWAY_SERVICE_NAME || 'session';
 const dbPath = path.join('/tmp', 'verified_users.db'); // Database di /tmp agar tidak hilang
 const authPath = path.join(__dirname, 'auth_info_' + sessionId); // Sesi unik per service
-const tebakkataPath = path.join(__dirname, 'tbkkata.json'); // Path file tebakkata
 // -------------------------
 
 // --- FUNGSI DATABASE ---
+const db = new sqlite3.Database(dbPath);
+
+// Inisialisasi database
+db.serialize(() => {
+    db.run('CREATE TABLE IF NOT EXISTS verified_users (jid TEXT PRIMARY KEY)');
+    db.run('CREATE TABLE IF NOT EXISTS game_scores (jid TEXT, game TEXT, score INTEGER)');
+});
+
 function isUserVerified(jid) {
     return new Promise((resolve, reject) => {
-        const db = new sqlite.Database(dbPath);
         db.get('SELECT jid FROM verified_users WHERE jid = ?', [jid], (err, row) => {
             if (err) reject(err);
             else resolve(!!row);
         });
-        db.close();
     });
 }
 
 function addUserToDatabase(jid) {
     return new Promise((resolve, reject) => {
-        const db = new sqlite.Database(dbPath);
         db.run('INSERT OR IGNORE INTO verified_users (jid) VALUES (?)', [jid], function(err) {
             if (err) reject(err);
             else resolve();
         });
-        db.close();
     });
 }
+// -------------------------
+
+// --- DATA GAME ---
+const tebakkataData = [
+    { soal: "Aku punya daun tapi bukan pohon, aku punya duri tapi bukan mawar. Siapa aku?", jawab: "nanas" },
+    { soal: "Berjalan tanpa kaki, bernyanyi tanpa mulut, tak pernah tidur tapi selalu diam. Siapa aku?", jawab: "sungai" },
+    { soal: "Semakin dikeringkan, semakin basah. Apa itu?", jawab: "handuk" },
+    { soal: "Benda apa yang selalu naik tapi tidak pernah turun?", jawab: "umur" },
+    { soal: "Bisa menembus kaca tanpa merusaknya. Apa itu?", jawab: "cahaya" }
+];
+
+let activeGames = {};
 // -------------------------
 
 // --- FUNGSI HELPER ---
@@ -58,34 +72,40 @@ function extractMessageText(msg) {
     const msgType = Object.keys(msg.message)[0];
     if (msgType === 'conversation') return msg.message.conversation;
     if (msgType === 'extendedTextMessage') return msg.message.extendedTextMessage.text;
-    if (msgType === 'imageMessage') return msg.message.imageMessage.caption;
-    if (msgType === 'videoMessage') return msg.message.videoMessage.caption;
+    if (msgType === 'imageMessage') return msg.message.imageMessage?.caption || '';
+    if (msgType === 'videoMessage') return msg.message.videoMessage?.caption || '';
     return '';
 }
 
 function parseMention(text) {
-    return [...text.matchAll(/@([0-9]{5,16}|0)/g)].map(v => v[1] + '@s.whatsapp.net');
+    const matches = text.match(/@(\d+)/g);
+    if (!matches) return [];
+    return matches.map(m => m.replace('@', '') + '@s.whatsapp.net');
 }
 
-function isAdminOrOwner(sock, message, senderJid) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return false;
-    
-    const groupMetadata = sock.groupMetadata(message.key.remoteJid);
-    const isAdmin = groupMetadata.participants.find(p => p.id === senderJid)?.admin;
-    const isOwner = senderJid === ownerNumber;
-    
-    return isAdmin || isOwner;
+function isOwner(jid) {
+    return jid === ownerNumber || jid.replace(/@s\.whatsapp\.net$/, '') === ownerNumber.replace(/@s\.whatsapp\.net$/, '');
 }
 
-function isOwner(senderJid) {
-    return senderJid === ownerNumber;
+async function getGroupAdmins(groupJid, sock) {
+    try {
+        const metadata = await sock.groupMetadata(groupJid);
+        return metadata.participants.filter(p => p.admin).map(p => p.id);
+    } catch (error) {
+        console.error('Error getting group admins:', error);
+        return [];
+    }
+}
+
+async function isGroupAdmin(groupJid, userJid, sock) {
+    const admins = await getGroupAdmins(groupJid, sock);
+    return admins.includes(userJid);
 }
 // -------------------------
 
 // --- FUNGSI-FUNGSI FITUR ---
 
-// 1. Menu (Teks Saja untuk Railway)
+// 1. Menu
 async function showMenu(sock, message) {
     const uptime = process.uptime();
     const hours = Math.floor(uptime / 3600);
@@ -132,38 +152,39 @@ github: ${githubLink}
 │ • .tebakkata
 │ • .mathquiz
 │ • .tebakangka
-╰╼━━━━━━━━━━━━━━╾❏
+╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗙𝗨𝗡 ⧽━╾❐
 │ • .cekiman <@tag>
 │ • .cekfemboy <@tag>
 │ • .cekfurry <@tag>
 │ • .cekjamet <@..>
-╰╼━━━━━━━━━━━━━━╾❏
+╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗗𝗢𝗪𝗡𝗟𝗢𝗔𝗗𝗘𝗥 ⧽━╾❐
-│ • .playyt <link>
+│ • .playyt <query>
 │ • .yt <url>
 │ • .ig <url>
+│ • .stiker <reply> <watermark>
 │ • .tostiker <reply img/vid>
 │ • .tomedia <reply stiker>
-╰╼━━━━━━━━━━━━━━╾❏
+╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗔𝗗𝗠𝗜𝗡 ⧽━╾❐
-│ • .kick <@..>
-│ • .ban <@..>
+│ • .kick <@tag>
+│ • .ban <@tag>
 │ • .grup buka|tutup
 │ • .totag <pesan>
 │ • .self
 │ • .unself
-╰╼━━━━━━━━━━━━━━╾❏
+╰╼━━━━━━━━━━━━━━━━╾❏
 
 ╭╼━⧼ 𝗠𝗘𝗡𝗨 𝗢𝗪𝗡𝗘𝗥 ⧽━╾❐
 │ • .npm <library>
 │ • .gclone <github link>
 │ • .apistatus
 │ • .log
-╰╼━━━━━━━━━━━━━━╾❏
+╰╼━━━━━━━━━━━━━━━━╾❏
 > copyright aal dev
 > humpreyDEV
     `;
@@ -180,18 +201,20 @@ async function verifyCommand(sock, message) {
     return sock.sendMessage(senderJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
 }
 
-// 3. Self / Unself
+// 3. Self / Unself (OWNER ONLY)
 async function selfCommand(sock, message) {
-    if (!isOwner(message.key.remoteJid)) {
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Hanya owner yang bisa menggunakan fitur ini!' });
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
     }
     selfMode = true;
-    return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self diaktifkan.' });
+    return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self diaktifkan. Hanya owner yang bisa menggunakan bot.' });
 }
 
 async function unselfCommand(sock, message) {
-    if (!isOwner(message.key.remoteJid)) {
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Hanya owner yang bisa menggunakan fitur ini!' });
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
     }
     selfMode = false;
     return sock.sendMessage(message.key.remoteJid, { text: '✅ Mode self dinonaktifkan.' });
@@ -200,21 +223,30 @@ async function unselfCommand(sock, message) {
 // 4. TikTok Downloader
 async function tosCommand(sock, message, text) {
     const url = text.split(' ')[1];
-    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link TikToknya!' });
+    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link TikToknya!\nContoh: .tiktok https://vt.tiktok.com/xxx' });
+    
     try {
-        const { result } = await import('@tobyg74/tiktok-api-dl');
-        const data = await result(url);
-        let resultText = `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title}\n\n`;
-        if (data.type === 'video') {
-            await sock.sendMessage(message.key.remoteJid, { video: { url: data.video[0] }, caption: resultText });
-        } else if (data.type === 'image') {
-            for (const imageUrl of data.images) {
-                await sock.sendMessage(message.key.remoteJid, { image: { url: imageUrl } });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload...' });
+        
+        // Menggunakan API external untuk download TikTok
+        const response = await axios.get(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`);
+        const data = response.data;
+        
+        if (data.video && data.video.noWatermark) {
+            await sock.sendMessage(message.key.remoteJid, { 
+                video: { url: data.video.noWatermark }, 
+                caption: `*TikTok Downloader*\n\n🎵 *Judul:* ${data.title || 'Tanpa judul'}\n👤 *Author:* ${data.author.nickname || 'Unknown'}` 
+            });
+        } else if (data.images) {
+            for (const img of data.images) {
+                await sock.sendMessage(message.key.remoteJid, { image: { url: img } });
             }
-            await sock.sendMessage(message.key.remoteJid, { text: resultText });
+            await sock.sendMessage(message.key.remoteJid, { 
+                text: `*TikTok Downloader*\n\n👤 *Author:* ${data.author.nickname || 'Unknown'}` 
+            });
         }
     } catch (error) {
-        console.error(error);
+        console.error('TikTok download error:', error);
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar.' });
     }
 }
@@ -222,76 +254,169 @@ async function tosCommand(sock, message, text) {
 // 5. Instagram Downloader (FIXED)
 async function igCommand(sock, message, text) {
     const url = text.split(' ')[1];
-    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!' });
+    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link Instagramnya!\nContoh: .ig https://instagram.com/p/xxx' });
+    
     try {
-        const { Insta } = await import('instagram-scraper');
-        const insta = new Insta();
-        const data = await insta.getPost(url);
-
-        if (data && data.media) {
-            for (const item of data.media) {
-                if (item.type === 'image') {
-                    await sock.sendMessage(message.key.remoteJid, { image: { url: item.url } });
-                } else if (item.type === 'video') {
-                    await sock.sendMessage(message.key.remoteJid, { video: { url: item.url } });
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mendownload dari Instagram...' });
+        
+        // Menggunakan API external
+        const response = await axios.get(`https://api.igdownloader.app/api/igdl?url=${encodeURIComponent(url)}`);
+        const data = response.data;
+        
+        if (data.media) {
+            for (const media of data.media) {
+                if (media.type === 'image') {
+                    await sock.sendMessage(message.key.remoteJid, { image: { url: media.url } });
+                } else if (media.type === 'video') {
+                    await sock.sendMessage(message.key.remoteJid, { video: { url: media.url } });
                 }
             }
-            await sock.sendMessage(message.key.remoteJid, { text: `*Instagram Downloader*\n\n👤 *Author:* ${data.author.username}\n💬 *Caption:* ${data.caption || 'No caption'}` });
+            await sock.sendMessage(message.key.remoteJid, { 
+                text: `*Instagram Downloader*\n\n👤 *Author:* ${data.username || 'Unknown'}` 
+            });
         } else {
-            throw new Error('Tidak dapat mengambil data dari Instagram.');
+            throw new Error('Tidak ada media ditemukan');
         }
     } catch (error) {
-        console.error(error);
-        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar dan bukan akun privat.' });
+        console.error('Instagram download error:', error);
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendownload. Pastikan link benar.' });
     }
 }
 
-// 6. YouTube Downloader (PlayYT)
+// 6. YouTube Downloader (Audio)
 async function playytCommand(sock, message, text) {
     const query = text.slice(8).trim();
-    if (!query) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan judul lagu!' });
+    if (!query) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan judul lagu!\nContoh: .playyt Coldplay Adventure of a Lifetime' });
+    
     try {
-        const searchResults = await ytdl.search(query, { limit: 1 });
-        if (searchResults.length === 0) throw new Error('Lagu tidak ditemukan');
-        const video = searchResults[0];
-        const stream = ytdl(video.videoDetails.video_url, { filter: 'audioonly', quality: 'highestaudio' });
-        const tempPath = path.join('/tmp', `temp_audio_${Date.now()}.mp3`); // Simpan di /tmp
-        await writeFile(tempPath, stream);
-        await sock.sendMessage(message.key.remoteJid, { audio: { url: tempPath }, mimetype: 'audio/mpeg' });
-        await unlink(tempPath);
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Mencari lagu...' });
+        
+        // Search video
+        const searchResults = await ytdl.getInfo(`https://www.youtube.com/watch?v=${(await ytdl.search(query, { limit: 1 }))[0]?.videoId}`);
+        
+        if (!searchResults) {
+            return sock.sendMessage(message.key.remoteJid, { text: '❌ Lagu tidak ditemukan' });
+        }
+        
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mengunduh audio...' });
+        
+        // Download audio
+        const stream = ytdl(searchResults.videoDetails.video_url, { 
+            filter: 'audioonly',
+            quality: 'highestaudio'
+        });
+        
+        const chunks = [];
+        for await (const chunk of stream) {
+            chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+        
+        // Send audio
+        await sock.sendMessage(message.key.remoteJid, { 
+            audio: buffer, 
+            mimetype: 'audio/mpeg',
+            ptt: false
+        });
+        
     } catch (error) {
-        console.error(error);
+        console.error('YouTube audio download error:', error);
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh lagu.' });
     }
 }
 
-// 7. YouTube Downloader (YT)
+// 7. YouTube Downloader (Video)
 async function ytCommand(sock, message, text) {
     const url = text.split(' ')[1];
-    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link YouTube!' });
+    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Kirim link YouTube!\nContoh: .yt https://youtube.com/watch?v=xxx' });
+    
     try {
+        await sock.sendMessage(message.key.remoteJid, { text: '⏳ Sedang mengunduh video...' });
+        
+        // Get video info
         const info = await ytdl.getInfo(url);
-        const stream = ytdl(url, { filter: 'audioonly', quality: 'highestaudio' });
-        const tempPath = path.join('/tmp', `temp_audio_${Date.now()}.mp3`);
-        await writeFile(tempPath, stream);
+        const format = ytdl.chooseFormat(info.formats, { quality: 'lowest' });
+        
+        // Download video
+        const stream = ytdl(url, { quality: 'lowest' });
+        const chunks = [];
+        for await (const chunk of stream) {
+            chunks.push(chunk);
+        }
+        const buffer = Buffer.concat(chunks);
+        
+        // Send video
         await sock.sendMessage(message.key.remoteJid, { 
-            audio: { url: tempPath }, 
-            mimetype: 'audio/mpeg',
-            caption: `*YouTube Downloader*\n\n🎵 *Judul:* ${info.videoDetails.title}\n👤 *Channel:* ${info.videoDetails.author.name}`
+            video: buffer,
+            caption: `*YouTube Downloader*\n\n📹 *Judul:* ${info.videoDetails.title}\n⏱️ *Durasi:* ${info.videoDetails.lengthSeconds} detik`
         });
-        await unlink(tempPath);
+        
     } catch (error) {
-        console.error(error);
+        console.error('YouTube video download error:', error);
         return sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengunduh video.' });
     }
 }
 
-// 8. To Stiker (Image/Video to Sticker)
+// 8. Sticker dengan watermark
+async function stikerCommand(sock, message, text) {
+    const msgType = Object.keys(message.message)[0];
+    const isQuoted = message.message.extendedTextMessage?.contextInfo?.quotedMessage;
+    
+    if (!['imageMessage', 'videoMessage'].includes(msgType) && !isQuoted) {
+        return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .stiker <watermark>\nContoh: .stiker by WindbiBot' });
+    }
+    
+    try {
+        const watermark = text.split(' ').slice(1).join(' ') || 'by WindbiBot';
+        
+        let buffer;
+        if (isQuoted) {
+            const quotedMsg = message.message.extendedTextMessage.contextInfo.quotedMessage;
+            const quotedType = Object.keys(quotedMsg)[0];
+            
+            if (!['imageMessage', 'videoMessage'].includes(quotedType)) {
+                return sock.sendMessage(message.key.remoteJid, { text: 'Hanya bisa reply gambar/video!' });
+            }
+            
+            const stream = await downloadContentFromMessage(quotedMsg[quotedType], quotedType.replace('Message', ''));
+            const chunks = [];
+            for await (const chunk of stream) {
+                chunks.push(chunk);
+            }
+            buffer = Buffer.concat(chunks);
+        } else {
+            const stream = await downloadContentFromMessage(message.message[msgType], msgType.replace('Message', ''));
+            const chunks = [];
+            for await (const chunk of stream) {
+                chunks.push(chunk);
+            }
+            buffer = Buffer.concat(chunks);
+        }
+        
+        // Kirim sticker
+        await sock.sendMessage(message.key.remoteJid, { 
+            sticker: buffer,
+            contextInfo: {
+                mentionedJid: [],
+                forwardingScore: 999,
+                isForwarded: false
+            }
+        }, { quoted: message });
+        
+    } catch (error) {
+        console.error("Gagal membuat stiker:", error);
+        return sock.sendMessage(message.key.remoteJid, { text: 'Gagal membuat stiker.' });
+    }
+}
+
+// 9. To Sticker (Image/Video to Sticker)
 async function tostikerCommand(sock, message) {
     const msgType = Object.keys(message.message)[0];
+    
     if (!['imageMessage', 'videoMessage'].includes(msgType)) {
         return sock.sendMessage(message.key.remoteJid, { text: 'Reply gambar/video dengan caption .tostiker' });
     }
+    
     try {
         const stream = await downloadContentFromMessage(message.message[msgType], msgType.replace('Message', ''));
         let buffer = Buffer.from([]);
@@ -299,131 +424,182 @@ async function tostikerCommand(sock, message) {
             buffer = Buffer.concat([buffer, chunk]);
         }
         
-        // Cek apakah ada watermark di caption
-        const caption = extractMessageText(message);
-        const watermark = caption.includes('watermark') ? caption.split('watermark')[1].trim() : 'Windbi Bot';
-        
         await sock.sendMessage(message.key.remoteJid, { 
-            sticker: buffer, 
-            mentions: [message.key.remoteJid],
-            contextInfo: {
-                externalAdReply: {
-                    title: 'Sticker Created',
-                    body: `Watermark: ${watermark}`,
-                    thumbnail: buffer,
-                    mediaType: 1,
-                    renderLargerThumbnail: true
-                }
-            }
+            sticker: buffer 
         }, { quoted: message });
+        
     } catch (error) {
         console.error("Gagal membuat stiker:", error);
         return sock.sendMessage(message.key.remoteJid, { text: 'Gagal membuat stiker.' });
     }
 }
 
-// 9. To Media (Sticker to Image/Video)
+// 10. To Media (Sticker to Image)
 async function tomediaCommand(sock, message) {
     const msgType = Object.keys(message.message)[0];
+    
     if (msgType !== 'stickerMessage') {
         return sock.sendMessage(message.key.remoteJid, { text: 'Reply stiker dengan caption .tomedia' });
     }
+    
     try {
-        const stream = await downloadContentFromMessage(message.message.stickerMessage, 'sticker');
+        const stream = await downloadContentFromMessage(message.message.stickerMessage, 'image');
         let buffer = Buffer.from([]);
         for await (const chunk of stream) {
             buffer = Buffer.concat([buffer, chunk]);
         }
-        await sock.sendMessage(message.key.remoteJid, { image: buffer }, { quoted: message });
+        
+        // Check if sticker is animated
+        const isAnimated = message.message.stickerMessage.isAnimated;
+        
+        if (isAnimated) {
+            // Convert to video
+            await sock.sendMessage(message.key.remoteJid, { 
+                video: buffer 
+            }, { quoted: message });
+        } else {
+            // Convert to image
+            await sock.sendMessage(message.key.remoteJid, { 
+                image: buffer 
+            }, { quoted: message });
+        }
+        
     } catch (error) {
         console.error("Gagal mengkonversi stiker:", error);
         return sock.sendMessage(message.key.remoteJid, { text: 'Gagal mengkonversi stiker ke media.' });
     }
 }
 
-// 10. Group Open/Close
-async function grupCommand(sock, message, text, senderJid) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk grup!' });
+// 11. Group Open/Close (ADMIN ONLY)
+async function grupCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    const groupJid = message.key.remoteJid;
     
-    if (!isAdminOrOwner(sock, message, senderJid)) {
-        return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk admin grup!' });
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
-
-    const groupMetadata = await sock.groupMetadata(message.key.remoteJid);
-    const isBotAdmin = groupMetadata.participants.find(p => p.id === sock.user.id)?.admin;
-
-    if (!isBotAdmin) {
-        return sock.sendMessage(senderJid, { text: 'Bot harus menjadi admin untuk menggunakan fitur ini!' });
+    
+    // Cek apakah pengirim adalah admin
+    const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
+    if (!isAdmin && !isOwner(senderJid)) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
     }
-
+    
     const action = text.split(' ')[1]?.toLowerCase();
     if (action === 'buka') {
-        await sock.groupSettingUpdate(message.key.remoteJid, 'not_announcement');
-        await sock.sendMessage(senderJid, { text: '✅ Grup telah dibuka.' });
+        await sock.groupSettingUpdate(groupJid, 'not_announcement');
+        await sock.sendMessage(groupJid, { text: '✅ Grup telah dibuka untuk semua member.' });
     } else if (action === 'tutup') {
-        await sock.groupSettingUpdate(message.key.remoteJid, 'announcement');
-        await sock.sendMessage(senderJid, { text: '✅ Grup telah ditutup.' });
+        await sock.groupSettingUpdate(groupJid, 'announcement');
+        await sock.sendMessage(groupJid, { text: '✅ Grup telah ditutup, hanya admin yang bisa mengirim pesan.' });
     } else {
-        await sock.sendMessage(senderJid, { text: 'Pilih *buka* atau *tutup*.' });
+        await sock.sendMessage(senderJid, { text: '❌ Gunakan: .grup buka atau .grup tutup' });
     }
 }
 
-// 11. Tag All (Totag)
-async function totagCommand(sock, message, text, senderJid) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk grup!' });
+// 12. Tag All (ADMIN ONLY)
+async function totagCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    const groupJid = message.key.remoteJid;
     
-    if (!isAdminOrOwner(sock, message, senderJid)) {
-        return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk admin!' });
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
-
-    const groupMetadata = await sock.groupMetadata(message.key.remoteJid);
-    const participants = groupMetadata.participants.map(p => p.id);
-    const mentions = participants;
-    const msgToTag = text.slice(7).trim() || 'Pesan dari admin';
-
-    await sock.sendMessage(message.key.remoteJid, { text: msgToTag, mentions }, { quoted: message });
+    
+    // Cek apakah pengirim adalah admin
+    const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
+    if (!isAdmin && !isOwner(senderJid)) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
+    }
+    
+    try {
+        const metadata = await sock.groupMetadata(groupJid);
+        const participants = metadata.participants;
+        const mentions = participants.map(p => p.id);
+        const msgToTag = text.slice(7).trim() || 'Halo semua!';
+        
+        await sock.sendMessage(groupJid, { 
+            text: `📢 *PEMBERITAHUAN*\n\n${msgToTag}\n\n_Mention all by ${metadata.subject || 'Group'}_`, 
+            mentions 
+        });
+        
+    } catch (error) {
+        console.error('Tag all error:', error);
+        return sock.sendMessage(senderJid, { text: '❌ Gagal melakukan tag all.' });
+    }
 }
 
-// 12. Kick User
-async function kickCommand(sock, message, text, senderJid) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk grup!' });
+// 13. Kick Member (ADMIN ONLY)
+async function kickCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    const groupJid = message.key.remoteJid;
     
-    if (!isOwner(senderJid)) {
-        return sock.sendMessage(senderJid, { text: 'Hanya owner yang bisa menggunakan fitur ini!' });
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
     }
-
+    
+    // Cek apakah pengirim adalah admin
+    const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
+    if (!isAdmin && !isOwner(senderJid)) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
+    }
+    
     const mentions = parseMention(text);
-    if (mentions.length === 0) return sock.sendMessage(senderJid, { text: 'Tag user yang ingin di kick!' });
-    
-    const target = mentions[0];
-    await sock.groupParticipantsUpdate(message.key.remoteJid, [target], 'remove');
-    await sock.sendMessage(senderJid, { text: `✅ User ${target} telah di kick.` });
-}
-
-// 13. Ban User
-async function banCommand(sock, message, text, senderJid) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return sock.sendMessage(senderJid, { text: 'Fitur ini hanya untuk grup!' });
-    
-    if (!isOwner(senderJid)) {
-        return sock.sendMessage(senderJid, { text: 'Hanya owner yang bisa menggunakan fitur ini!' });
+    if (mentions.length === 0) {
+        return sock.sendMessage(senderJid, { text: '❌ Tag member yang ingin di-kick!\nContoh: .kick @member' });
     }
-
-    const mentions = parseMention(text);
-    if (mentions.length === 0) return sock.sendMessage(senderJid, { text: 'Tag user yang ingin di ban!' });
     
-    const target = mentions[0];
-    await sock.groupParticipantsUpdate(message.key.remoteJid, [target], 'remove');
-    await sock.sendMessage(senderJid, { text: `✅ User ${target} telah di ban.` });
+    try {
+        for (const userJid of mentions) {
+            await sock.groupParticipantsUpdate(groupJid, [userJid], 'remove');
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Delay antar kick
+        }
+        await sock.sendMessage(groupJid, { text: `✅ Berhasil mengeluarkan ${mentions.length} member.` });
+    } catch (error) {
+        console.error('Kick error:', error);
+        return sock.sendMessage(senderJid, { text: '❌ Gagal mengeluarkan member.' });
+    }
 }
 
-// 14. GitHub Info
+// 14. Ban Member (ADMIN ONLY)
+async function banCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    const groupJid = message.key.remoteJid;
+    
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk grup!' });
+    }
+    
+    // Cek apakah pengirim adalah admin
+    const isAdmin = await isGroupAdmin(groupJid, senderJid, sock);
+    if (!isAdmin && !isOwner(senderJid)) {
+        return sock.sendMessage(senderJid, { text: '❌ Command ini hanya untuk admin grup!' });
+    }
+    
+    const mentions = parseMention(text);
+    if (mentions.length === 0) {
+        return sock.sendMessage(senderJid, { text: '❌ Tag member yang ingin di-ban!\nContoh: .ban @member' });
+    }
+    
+    try {
+        // Ban = kick + prevent join
+        for (const userJid of mentions) {
+            await sock.groupParticipantsUpdate(groupJid, [userJid], 'remove');
+            // Bisa ditambahkan log ke database untuk banned users
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        await sock.sendMessage(groupJid, { text: `✅ Berhasil mem-ban ${mentions.length} member.` });
+    } catch (error) {
+        console.error('Ban error:', error);
+        return sock.sendMessage(senderJid, { text: '❌ Gagal mem-ban member.' });
+    }
+}
+
+// 15. GitHub Info
 async function githubCommand(sock, message, text) {
     const username = text.split(' ')[1];
-    if (!username) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan username GitHub.' });
+    if (!username) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan username GitHub.\nContoh: .github humpreydev-hash' });
+    
     try {
         const { data } = await axios.get(`https://api.github.com/users/${username}`);
         const resultText = `*GitHub Profile*\n\n👤 *Username:* ${data.login}\n📝 *Name:* ${data.name || 'No name'}\n📊 *Public Repos:* ${data.public_repos}\n👥 *Followers:* ${data.followers}\n🔗 *Profile:* ${data.html_url}`;
@@ -433,10 +609,16 @@ async function githubCommand(sock, message, text) {
     }
 }
 
-// 15. NPM Info
+// 16. NPM Info (OWNER ONLY)
 async function npmCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
+    }
+    
     const packageName = text.split(' ')[1];
-    if (!packageName) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan nama package.' });
+    if (!packageName) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan nama package.\nContoh: .npm axios' });
+    
     try {
         const { data } = await axios.get(`https://registry.npmjs.org/${packageName}`);
         const latestVersion = data['dist-tags'].latest;
@@ -448,88 +630,387 @@ async function npmCommand(sock, message, text) {
     }
 }
 
-// 16. Tebak Kata
-async function tebakkataCommand(sock, message) {
-    if (!existsSync(tebakkataPath)) {
-        return sock.sendMessage(message.key.remoteJid, { text: 'File tebakkata.json tidak ditemukan!' });
+// 17. GitHub Clone (OWNER ONLY)
+async function gcloneCommand(sock, message, text) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
+    }
+    
+    const url = text.split(' ')[1];
+    if (!url) return sock.sendMessage(message.key.remoteJid, { text: 'Masukkan link GitHub.\nContoh: .gclone https://github.com/user/repo' });
+    
+    try {
+        // Extract repo info from URL
+        const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+        if (!match) {
+            return sock.sendMessage(message.key.remoteJid, { text: '❌ Format URL tidak valid.' });
+        }
+        
+        const [, user, repo] = match;
+        const repoUrl = `https://github.com/${user}/${repo}`;
+        const apiUrl = `https://api.github.com/repos/${user}/${repo}`;
+        
+        const { data } = await axios.get(apiUrl);
+        const resultText = `*GitHub Repository Info*\n\n📂 *Repo:* ${data.full_name}\n📝 *Description:* ${data.description || 'No description'}\n⭐ *Stars:* ${data.stargazers_count}\n🍴 *Forks:* ${data.forks_count}\n🔗 *URL:* ${repoUrl}\n📥 *Clone:* \`git clone ${repoUrl}.git\``;
+        
+        await sock.sendMessage(message.key.remoteJid, { text: resultText });
+    } catch (error) {
+        console.error('GitHub clone error:', error);
+        await sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mendapatkan info repository.' });
+    }
+}
+
+// 18. API Status (OWNER ONLY)
+async function apistatusCommand(sock, message) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
     }
     
     try {
-        const data = JSON.parse(await readFile(tebakkataPath, 'utf8'));
-        const randomIndex = Math.floor(Math.random() * data.length);
-        const question = data[randomIndex];
+        const apis = [
+            { name: 'GitHub API', url: 'https://api.github.com' },
+            { name: 'NPM Registry', url: 'https://registry.npmjs.org' },
+            { name: 'YouTube', url: 'https://www.youtube.com' },
+            { name: 'Instagram', url: 'https://www.instagram.com' }
+        ];
         
-        await sock.sendMessage(message.key.remoteJid, { 
-            text: `Tebak Kata:\n\nPertanyaan: ${question.question}\n\nKetik .jkata <jawaban> untuk menjawab` 
+        let statusText = '*API Status Check*\n\n';
+        
+        for (const api of apis) {
+            try {
+                const start = Date.now();
+                await axios.get(api.url, { timeout: 5000 });
+                const latency = Date.now() - start;
+                statusText += `✅ ${api.name}: Online (${latency}ms)\n`;
+            } catch (error) {
+                statusText += `❌ ${api.name}: Offline\n`;
+            }
+        }
+        
+        await sock.sendMessage(message.key.remoteJid, { text: statusText });
+    } catch (error) {
+        console.error('API status error:', error);
+        await sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengecek status API.' });
+    }
+}
+
+// 19. Log (OWNER ONLY)
+async function logCommand(sock, message) {
+    const senderJid = message.key.participant || message.key.remoteJid;
+    if (!isOwner(senderJid)) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Command ini hanya untuk owner!' });
+    }
+    
+    try {
+        const logInfo = `
+*System Log Information*
+        
+🖥️ *Platform:* ${process.platform}
+📦 *Node.js:* ${process.version}
+🗺️ *Architecture:* ${process.arch}
+⏱️ *Uptime:* ${Math.floor(process.uptime())} detik
+💾 *Memory Usage:* ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB
+📂 *Working Directory:* ${process.cwd()}
+        
+*Bot Status:*
+✅ Connected
+🔧 Self Mode: ${selfMode ? 'ON' : 'OFF'}
+📊 Verified Users: ${await getVerifiedCount()} users
+        `;
+        
+        await sock.sendMessage(message.key.remoteJid, { text: logInfo });
+    } catch (error) {
+        console.error('Log error:', error);
+        await sock.sendMessage(message.key.remoteJid, { text: '❌ Gagal mengambil log.' });
+    }
+}
+
+// Helper: Get verified users count
+function getVerifiedCount() {
+    return new Promise((resolve, reject) => {
+        db.get('SELECT COUNT(*) as count FROM verified_users', (err, row) => {
+            if (err) reject(err);
+            else resolve(row.count);
         });
-        
-        // Simpan pertanyaan saat ini untuk verifikasi jawaban
-        global.currentQuestion = {
-            jid: message.key.remoteJid,
-            question: question.question,
-            answer: question.answer.toLowerCase()
-        };
-    } catch (error) {
-        console.error(error);
-        await sock.sendMessage(message.key.remoteJid, { text: 'Gagal memuat pertanyaan tebakkata.' });
-    }
+    });
 }
 
-// 17. Jawaban Tebak Kata
-async function jawabkataCommand(sock, message, text) {
-    if (!global.currentQuestion || global.currentQuestion.jid !== message.key.remoteJid) {
-        return sock.sendMessage(message.key.remoteJid, { text: 'Tidak ada pertanyaan tebakkata yang sedang berjalan.' });
-    }
-    
-    const jawaban = text.split(' ')[1]?.toLowerCase();
-    if (!jawaban) return sock.sendMessage(message.key.remoteJid, { text: 'Ketik .jkata <jawaban> untuk menjawab.' });
-    
-    if (jawaban === global.currentQuestion.answer) {
-        await sock.sendMessage(message.key.remoteJid, { text: '✅ Jawaban benar! Selamat!' });
-        delete global.currentQuestion;
-    } else {
-        await sock.sendMessage(message.key.remoteJid, { text: `❌ Jawaban salah. Coba lagi!` });
-    }
-}
-
-// 18. Info Grup (Gig)
+// 20. Get Group Info (gig)
 async function gigCommand(sock, message) {
-    const isGroup = message.key.remoteJid.endsWith('@g.us');
-    if (!isGroup) return sock.sendMessage(message.key.remoteJid, { text: 'Fitur ini hanya untuk grup!' });
+    const groupJid = message.key.remoteJid;
+    
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(groupJid, { text: '❌ Command ini hanya untuk grup!' });
+    }
     
     try {
-        const groupMetadata = await sock.groupMetadata(message.key.remoteJid);
-        const groupDesc = await sock.groupGetDescription(message.key.remoteJid);
+        const metadata = await sock.groupMetadata(groupJid);
+        const participants = metadata.participants;
+        const admins = participants.filter(p => p.admin).map(p => p.id.split('@')[0]);
         
-        const infoText = `*Informasi Grup*\n\n📱 *Nama Grup:* ${groupMetadata.subject}\n👥 *Jumlah Member:* ${groupMetadata.participants.length}\n👥 *Admin:* ${groupMetadata.participants.filter(p => p.admin).length}\n📝 *Deskripsi:* ${groupDesc || 'Tidak ada deskripsi'}\n🔗 *ID Grup:* ${message.key.remoteJid}`;
+        const groupInfo = `
+*Group Information*
         
-        await sock.sendMessage(message.key.remoteJid, { text: infoText });
+📛 *Nama Grup:* ${metadata.subject}
+👑 *Pembuat:* ${metadata.owner?.split('@')[0] || 'Unknown'}
+👥 *Total Member:* ${participants.length} orang
+🛡️ *Admin:* ${admins.length} orang
+🔗 *Group ID:* ${metadata.id}
+📅 *Dibuat:* ${new Date(metadata.creation * 1000).toLocaleDateString()}
+🔒 *Status:* ${metadata.announce ? 'Terkunci (hanya admin)' : 'Terbuka (semua bisa chat)'}
+        
+*Bot Status:* ${participants.find(p => p.id === sock.user.id) ? '✅ Ada di grup' : '❌ Tidak ada di grup'}
+        `;
+        
+        await sock.sendMessage(groupJid, { text: groupInfo });
     } catch (error) {
-        console.error(error);
-        await sock.sendMessage(message.key.remoteJid, { text: 'Gagal mengambil info grup.' });
+        console.error('Group info error:', error);
+        await sock.sendMessage(groupJid, { text: '❌ Gagal mendapatkan info grup.' });
     }
 }
 
-// 19. Cek Fun (Random Percentage)
+// 21. Link Group
+async function linkCommand(sock, message) {
+    const groupJid = message.key.remoteJid;
+    
+    if (!groupJid.endsWith('@g.us')) {
+        return sock.sendMessage(groupJid, { text: '❌ Command ini hanya untuk grup!' });
+    }
+    
+    try {
+        const code = await sock.groupInviteCode(groupJid);
+        const inviteLink = `https://chat.whatsapp.com/${code}`;
+        
+        await sock.sendMessage(groupJid, { 
+            text: `*Group Invite Link*\n\n🔗 ${inviteLink}\n\nShare link ini untuk mengundang orang ke grup.` 
+        });
+    } catch (error) {
+        console.error('Link error:', error);
+        await sock.sendMessage(groupJid, { text: '❌ Gagal membuat link grup. Pastikan bot adalah admin.' });
+    }
+}
+
+// 22. Tebak Kata Game
+async function tebakkataCommand(sock, message) {
+    const gameId = message.key.remoteJid;
+    const randomGame = tebakkataData[Math.floor(Math.random() * tebakkataData.length)];
+    
+    activeGames[gameId] = {
+        type: 'tebakkata',
+        answer: randomGame.jawab.toLowerCase(),
+        timestamp: Date.now()
+    };
+    
+    await sock.sendMessage(gameId, { 
+        text: `*Game Tebak Kata* 🎮\n\n${randomGame.soal}\n\nJawab dengan mengetik jawaban kamu!` 
+    });
+    
+    // Set timeout untuk game (5 menit)
+    setTimeout(() => {
+        if (activeGames[gameId]) {
+            delete activeGames[gameId];
+        }
+    }, 5 * 60 * 1000);
+}
+
+// 23. Math Quiz Game
+async function mathquizCommand(sock, message) {
+    const gameId = message.key.remoteJid;
+    const num1 = Math.floor(Math.random() * 50) + 1;
+    const num2 = Math.floor(Math.random() * 50) + 1;
+    const operators = ['+', '-', '*'];
+    const operator = operators[Math.floor(Math.random() * operators.length)];
+    
+    let answer;
+    switch(operator) {
+        case '+': answer = num1 + num2; break;
+        case '-': answer = num1 - num2; break;
+        case '*': answer = num1 * num2; break;
+    }
+    
+    activeGames[gameId] = {
+        type: 'mathquiz',
+        answer: answer.toString(),
+        timestamp: Date.now()
+    };
+    
+    await sock.sendMessage(gameId, { 
+        text: `*Math Quiz* 🧮\n\nBerapakah hasil dari: ${num1} ${operator} ${num2} ?\n\nJawab dengan angka!` 
+    });
+    
+    setTimeout(() => {
+        if (activeGames[gameId]) {
+            delete activeGames[gameId];
+        }
+    }, 3 * 60 * 1000);
+}
+
+// 24. Tebak Angka Game
+async function tebakangkaCommand(sock, message) {
+    const gameId = message.key.remoteJid;
+    const answer = Math.floor(Math.random() * 100) + 1;
+    
+    activeGames[gameId] = {
+        type: 'tebakangka',
+        answer: answer.toString(),
+        timestamp: Date.now(),
+        attempts: 0,
+        hints: 0
+    };
+    
+    await sock.sendMessage(gameId, { 
+        text: `*Game Tebak Angka* 🎯\n\nSaya memikirkan angka antara 1-100.\nTebak angka yang saya pikirkan!\n\nKetik .hint untuk mendapatkan petunjuk.` 
+    });
+    
+    setTimeout(() => {
+        if (activeGames[gameId]) {
+            delete activeGames[gameId];
+        }
+    }, 5 * 60 * 1000);
+}
+
+// 25. Cek Fun (Random Percentage)
 function cekFun(sock, message, text, type) {
     const mentions = parseMention(text);
-    if (mentions.length === 0) return sock.sendMessage(message.key.remoteJid, { text: `Tag orang yang ingin dicek ${type}!` });
-    const target = mentions[0];
-    const percentage = Math.floor(Math.random() * 101);
-    sock.sendMessage(message.key.remoteJid, { text: `Orang itu ${type}: ${percentage}%`, mentions: [target] }, { quoted: message });
+    const senderJid = message.key.participant || message.key.remoteJid;
+    
+    if (mentions.length === 0) {
+        // Jika tidak ada mention, cek diri sendiri
+        const percentage = Math.floor(Math.random() * 101);
+        const types = {
+            'iman': 'Kadar iman',
+            'femboy': 'Kadar femboy',
+            'furry': 'Kadar furry',
+            'jamet': 'Kadar jamet'
+        };
+        
+        sock.sendMessage(message.key.remoteJid, { 
+            text: `${types[type]} kamu: ${percentage}% ${percentage > 70 ? '😱' : percentage > 40 ? '😅' : '😌'}` 
+        }, { quoted: message });
+    } else {
+        // Jika ada mention, cek orang yang di-tag
+        const target = mentions[0];
+        const percentage = Math.floor(Math.random() * 101);
+        const types = {
+            'iman': 'Kadar iman',
+            'femboy': 'Kadar femboy',
+            'furry': 'Kadar furry',
+            'jamet': 'Kadar jamet'
+        };
+        
+        sock.sendMessage(message.key.remoteJid, { 
+            text: `${types[type]} orang itu: ${percentage}%`,
+            mentions: [target]
+        }, { quoted: message });
+    }
+}
+
+// 26. Game Handler untuk jawaban
+async function handleGameAnswer(sock, message) {
+    const gameId = message.key.remoteJid;
+    const game = activeGames[gameId];
+    
+    if (!game) return false;
+    
+    const userAnswer = extractMessageText(message).toLowerCase().trim();
+    const senderJid = message.key.participant || message.key.remoteJid;
+    
+    if (game.type === 'tebakkata') {
+        if (userAnswer === game.answer) {
+            delete activeGames[gameId];
+            await sock.sendMessage(gameId, { 
+                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!` 
+            }, { quoted: message });
+            return true;
+        }
+    } else if (game.type === 'mathquiz') {
+        if (userAnswer === game.answer) {
+            delete activeGames[gameId];
+            await sock.sendMessage(gameId, { 
+                text: `🎉 *Benar!*\nJawaban: ${game.answer}\n\nSelamat ${senderJid.split('@')[0]}!` 
+            }, { quoted: message });
+            return true;
+        }
+    } else if (game.type === 'tebakangka') {
+        game.attempts++;
+        const userNum = parseInt(userAnswer);
+        const answerNum = parseInt(game.answer);
+        
+        if (isNaN(userNum)) return false;
+        
+        if (userNum === answerNum) {
+            delete activeGames[gameId];
+            await sock.sendMessage(gameId, { 
+                text: `🎉 *Benar!*\nAngka yang saya pikirkan: ${game.answer}\n\nKamu menebak dalam ${game.attempts} percobaan!\nSelamat ${senderJid.split('@')[0]}!` 
+            }, { quoted: message });
+            return true;
+        } else {
+            let hint = '';
+            if (userNum < answerNum) {
+                hint = '📈 Angka terlalu kecil!';
+            } else {
+                hint = '📉 Angka terlalu besar!';
+            }
+            
+            // Beri hint setiap 3 percobaan
+            if (game.attempts % 3 === 0 && game.hints < 3) {
+                game.hints++;
+                const rangeHint = `Angka antara ${Math.max(1, answerNum - 10)} dan ${Math.min(100, answerNum + 10)}`;
+                await sock.sendMessage(gameId, { 
+                    text: `❌ Salah!\n${hint}\n\n💡 *Hint ${game.hints}:* ${rangeHint}` 
+                }, { quoted: message });
+            } else {
+                await sock.sendMessage(gameId, { 
+                    text: `❌ Salah!\n${hint}` 
+                }, { quoted: message });
+            }
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// 27. Hint untuk tebakangka
+async function hintCommand(sock, message) {
+    const gameId = message.key.remoteJid;
+    const game = activeGames[gameId];
+    
+    if (!game || game.type !== 'tebakangka') {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Tidak ada game tebak angka yang aktif!' });
+    }
+    
+    if (game.hints >= 3) {
+        return sock.sendMessage(message.key.remoteJid, { text: '❌ Sudah menggunakan semua hint!' });
+    }
+    
+    game.hints++;
+    const answerNum = parseInt(game.answer);
+    let hint;
+    
+    switch(game.hints) {
+        case 1:
+            hint = `Angka ini ${answerNum % 2 === 0 ? 'genap' : 'ganjil'}`;
+            break;
+        case 2:
+            hint = `Angka ini ${answerNum > 50 ? 'lebih dari' : 'kurang dari atau sama dengan'} 50`;
+            break;
+        case 3:
+            const tens = Math.floor(answerNum / 10) * 10;
+            hint = `Angka ini berada di antara ${tens} dan ${tens + 10}`;
+            break;
+    }
+    
+    await sock.sendMessage(message.key.remoteJid, { 
+        text: `💡 *Hint ${game.hints}:* ${hint}` 
+    });
 }
 
 // --- FUNGSI UTAMA BOT ---
 async function startBot() {
     console.log('Memulai bot WhatsApp...');
-
-    // Inisialisasi database
-    const db = new sqlite.Database(dbPath);
-    db.run('CREATE TABLE IF NOT EXISTS verified_users (jid TEXT PRIMARY KEY)', (err) => {
-        if (err) console.error('Gagal membuat tabel:', err.message);
-        else console.log('✅ Database siap.');
-    });
-    db.close();
 
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -572,14 +1053,17 @@ async function startBot() {
         if (msg.message.protocolMessage) return;
         if (msg.key.fromMe) return;
 
-        const senderJid = msg.key.remoteJid;
+        const senderJid = msg.key.participant || msg.key.remoteJid;
         const messageText = extractMessageText(msg);
+        
+        // Cek apakah ini jawaban game
+        const isGameAnswer = await handleGameAnswer(sock, msg);
+        if (isGameAnswer) return;
+        
         if (!messageText.startsWith(botPrefix)) return;
 
-        const commandName = messageText.toLowerCase().trim().split(/ +/)[0];
-        const args = messageText.trim().split(/ +/);
-        const command = args.shift().toLowerCase();
-
+        const command = messageText.toLowerCase().trim().split(/ +/)[0];
+        
         console.log(`\n--- Pesan Masuk ---`);
         console.log(`Dari: ${senderJid}`);
         console.log(`Command: ${command}`);
@@ -587,9 +1071,9 @@ async function startBot() {
 
         // --- SISTEM VERIFIKASI & SELF ---
         if (command !== '.verify' && !(await isUserVerified(senderJid))) {
-            return sock.sendMessage(senderJid, { text: '❌ Kamu belum terverifikasi. Ketik *.verify* untuk menggunakan bot.' });
+            return sock.sendMessage(msg.key.remoteJid, { text: '❌ Kamu belum terverifikasi. Ketik *.verify* untuk menggunakan bot.' });
         }
-        if (selfMode && senderJid !== ownerNumber) {
+        if (selfMode && !isOwner(senderJid)) {
             return;
         }
         // --- AKHIR SISTEM ---
@@ -600,31 +1084,38 @@ async function startBot() {
                 case '.verify': await verifyCommand(sock, msg); break;
                 case '.self': await selfCommand(sock, msg); break;
                 case '.unself': await unselfCommand(sock, msg); break;
-                case '.tos': case '.tostiktok': await tosCommand(sock, msg, messageText); break;
+                case '.tos': case '.tiktok': await tosCommand(sock, msg, messageText); break;
                 case '.ig': await igCommand(sock, msg, messageText); break;
                 case '.playyt': await playytCommand(sock, msg, messageText); break;
                 case '.yt': await ytCommand(sock, msg, messageText); break;
+                case '.stiker': await stikerCommand(sock, msg, messageText); break;
                 case '.tostiker': await tostikerCommand(sock, msg); break;
                 case '.tomedia': await tomediaCommand(sock, msg); break;
-                case '.grup': await grupCommand(sock, msg, messageText, senderJid); break;
-                case '.totag': await totagCommand(sock, msg, messageText, senderJid); break;
-                case '.kick': await kickCommand(sock, msg, messageText, senderJid); break;
-                case '.ban': await banCommand(sock, msg, messageText, senderJid); break;
+                case '.grup': await grupCommand(sock, msg, messageText); break;
+                case '.totag': await totagCommand(sock, msg, messageText); break;
+                case '.kick': await kickCommand(sock, msg, messageText); break;
+                case '.ban': await banCommand(sock, msg, messageText); break;
                 case '.github': await githubCommand(sock, msg, messageText); break;
                 case '.npm': await npmCommand(sock, msg, messageText); break;
-                case '.tebakkata': await tebakkataCommand(sock, msg); break;
-                case '.jkata': await jawabkataCommand(sock, msg, messageText); break;
+                case '.gclone': await gcloneCommand(sock, msg, messageText); break;
+                case '.apistatus': await apistatusCommand(sock, msg); break;
+                case '.log': await logCommand(sock, msg); break;
                 case '.gig': await gigCommand(sock, msg); break;
+                case '.link': await linkCommand(sock, msg); break;
+                case '.tebakkata': await tebakkataCommand(sock, msg); break;
+                case '.mathquiz': await mathquizCommand(sock, msg); break;
+                case '.tebakangka': await tebakangkaCommand(sock, msg); break;
+                case '.hint': await hintCommand(sock, msg); break;
                 case '.cekiman': cekFun(sock, msg, messageText, 'iman'); break;
                 case '.cekfemboy': cekFun(sock, msg, messageText, 'femboy'); break;
                 case '.cekfurry': cekFun(sock, msg, messageText, 'furry'); break;
                 case '.cekjamet': cekFun(sock, msg, messageText, 'jamet'); break;
-                case '.ping': await sock.sendMessage(senderJid, { text: 'Pong!' }); break;
-                default: await sock.sendMessage(senderJid, { text: `Command "${command}" tidak ditemukan. Ketik .menu` }); break;
+                case '.ping': await sock.sendMessage(msg.key.remoteJid, { text: '🏓 Pong!' }); break;
+                default: await sock.sendMessage(msg.key.remoteJid, { text: `❌ Command "${command}" tidak ditemukan. Ketik .menu` }); break;
             }
         } catch (error) {
             console.error(`❌ Error saat menjalankan command ${command}:`, error);
-            await sock.sendMessage(senderJid, { text: 'Maaf, terjadi kesalahan.' });
+            await sock.sendMessage(msg.key.remoteJid, { text: '❌ Maaf, terjadi kesalahan.' });
         }
     });
 }
