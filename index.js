@@ -191,14 +191,24 @@ github: ${githubLink}
     await sock.sendMessage(message.key.remoteJid, { text: menuText });
 }
 
-// 2. Verify
+// 2. Verify (PERBAIKAN: Tidak spam dan cek lebih baik)
 async function verifyCommand(sock, message) {
-    const senderJid = message.key.remoteJid;
-    if (await isUserVerified(senderJid)) {
-        return sock.sendMessage(senderJid, { text: '✅ Nomor kamu sudah terverifikasi.' });
+    const senderJid = message.key.participant || message.key.remoteJid;
+    
+    // Cek apakah user sudah terverifikasi
+    const isVerified = await isUserVerified(senderJid);
+    if (isVerified) {
+        return sock.sendMessage(senderJid, { text: '✅ Nomor kamu sudah terverifikasi sebelumnya.' });
     }
-    await addUserToDatabase(senderJid);
-    return sock.sendMessage(senderJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
+    
+    // Tambahkan user ke database
+    try {
+        await addUserToDatabase(senderJid);
+        await sock.sendMessage(senderJid, { text: '✅ Verifikasi berhasil! Selamat menggunakan bot.' });
+    } catch (error) {
+        console.error('Verification error:', error);
+        await sock.sendMessage(senderJid, { text: '❌ Gagal melakukan verifikasi. Coba lagi.' });
+    }
 }
 
 // 3. Self / Unself (OWNER ONLY)
