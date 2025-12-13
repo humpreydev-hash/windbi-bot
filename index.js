@@ -2,7 +2,6 @@ import makeWASocket, {
   useMultiFileAuthState,
   downloadContentFromMessage
 } from "@whiskeysockets/baileys"
-
 import sharp from "sharp"
 
 async function startBot() {
@@ -14,17 +13,23 @@ async function startBot() {
 
   sock.ev.on("creds.update", saveCreds)
 
-  // ===== LOGIN PAIRING CODE =====
-  if (!state.creds.registered) {
-    const nomorWA = "6281234567890" // GANTI NOMOR KAMU (tanpa +)
-    const code = await sock.requestPairingCode(nomorWA)
-    console.log("🔐 Pairing Code:", code)
-    console.log("Masukkan kode ini di WhatsApp kamu")
-  }
+  let pairingRequested = false
 
-  sock.ev.on("connection.update", (update) => {
-    if (update.connection === "open") {
-      console.log("✅ Bot berhasil login ke WhatsApp")
+  sock.ev.on("connection.update", async (update) => {
+    const { connection } = update
+
+    if (connection === "open") {
+      console.log("✅ Socket WhatsApp terhubung")
+
+      if (!state.creds.registered && !pairingRequested) {
+        pairingRequested = true
+
+        const nomorWA = "628xxxxxxxxxx" // tanpa +
+        const code = await sock.requestPairingCode(nomorWA)
+
+        console.log("🔐 PAIRING CODE:", code)
+        console.log("Masukkan di WhatsApp > Perangkat tertaut")
+      }
     }
   })
 
@@ -38,14 +43,13 @@ async function startBot() {
       msg.message.extendedTextMessage?.text ||
       ""
 
-    // ===== COMMAND STIKER =====
     if (text.startsWith(";stiker")) {
       const quoted =
         msg.message.extendedTextMessage?.contextInfo?.quotedMessage
 
-      if (!quoted || !quoted.imageMessage) {
+      if (!quoted?.imageMessage) {
         await sock.sendMessage(from, {
-          text: "❌ Reply gambar!\nContoh:\n;stiker dibuat oleh humpreyDev"
+          text: "Reply gambar lalu ketik ;stiker nama"
         })
         return
       }
@@ -63,14 +67,14 @@ async function startBot() {
         buffer = Buffer.concat([buffer, chunk])
       }
 
-      const stickerBuffer = await sharp(buffer)
+      const sticker = await sharp(buffer)
         .resize(512, 512, { fit: "contain" })
         .webp()
         .toBuffer()
 
       await sock.sendMessage(
         from,
-        { sticker: stickerBuffer },
+        { sticker },
         {
           stickerMetadata: {
             pack: "Bot Stiker",
