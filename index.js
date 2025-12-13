@@ -1,15 +1,27 @@
-const {
-  default: makeWASocket,
+import makeWASocket, {
+  DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  DisconnectReason
-} = require('@whiskeysockets/baileys')
+  downloadContentFromMessage
+} from '@whiskeysockets/baileys'
 
-const P = require('pino')
-const sharp = require('sharp')
+import P from 'pino'
+import sharp from 'sharp'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+// === FIX __dirname DI ESM ===
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+
+// === AUTH PATH ===
+const authPath = path.join(__dirname, 'auth_info')
+
+// === NOMOR UNTUK PAIRING CODE ===
+const pairingNumber = '628XXXXXXXXX' // GANTI NOMOR KAMU
 
 async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
+  const { state, saveCreds } = await useMultiFileAuthState(authPath)
   const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
@@ -21,8 +33,8 @@ async function startBot() {
 
   // === PAIRING CODE LOGIN ===
   if (!sock.authState.creds.registered) {
-    const pairingCode = await sock.requestPairingCode('628XXXXXXXXX')
-    console.log('PAIRING CODE:', pairingCode)
+    const code = await sock.requestPairingCode(pairingNumber)
+    console.log('PAIRING CODE:', code)
   }
 
   sock.ev.on('creds.update', saveCreds)
@@ -38,10 +50,11 @@ async function startBot() {
     }
 
     if (connection === 'open') {
-      console.log('BOT ONLINE')
+      console.log('BOT CONNECTED')
     }
   })
 
+  // === MESSAGE HANDLER ===
   sock.ev.on('messages.upsert', async ({ messages }) => {
     const msg = messages[0]
     if (!msg.message) return
@@ -52,51 +65,50 @@ async function startBot() {
       msg.message.extendedTextMessage?.text
 
     if (!text) return
+    if (!text.startsWith(';stiker')) return
 
-    // === COMMAND STIKER ===
-    if (text.startsWith(';stiker')) {
-      const quoted =
-        msg.message.extendedTextMessage?.contextInfo?.quotedMessage
+    const quoted =
+      msg.message.extendedTextMessage?.contextInfo?.quotedMessage
 
-      if (!quoted || !quoted.imageMessage) {
-        return sock.sendMessage(
-          from,
-          { text: 'Reply gambar dengan ;stiker <nama>' },
-          { quoted: msg }
-        )
-      }
-
-      const author = text.split(' ')[1] || 'humpreyDev'
-
-      const buffer = await sock.downloadMediaMessage({
-        message: quoted,
-        key: {
-          remoteJid: from,
-          id: msg.message.extendedTextMessage.contextInfo.stanzaId,
-          fromMe: false
-        }
-      })
-
-      const sticker = await sharp(buffer)
-        .resize(512, 512, { fit: 'contain' })
-        .webp()
-        .toBuffer()
-
-      await sock.sendMessage(
+    if (!quoted || !quoted.imageMessage) {
+      return sock.sendMessage(
         from,
-        {
-          sticker,
-          contextInfo: {
-            externalAdReply: {
-              title: 'Sticker',
-              body: `Dibuat oleh ${author}`,
-              mediaType: 1
-            }
-          }
-        },
+        { text: 'Reply gambar dengan ;stiker <nama>' },
         { quoted: msg }
       )
     }
+
+    const author = text.split(' ')[1] || 'humpreyDev'
+
+    const stream = await downloadContentFromMessage(
+      quoted.imageMessage,
+      'image'
+    )
+
+    let buffer = Buffer.from([])
+    for await (const chunk of stream) {
+      buffer = Buffer.concat([buffer, chunk])
+    }
+
+    const sticker = await sharp(buffer)
+      .resize(512, 512, { fit: 'contain' })
+      .webp()
+      .toBuffer()
+
+    await sock.sendMessage(
+      from,
+      {
+        sticker,
+        contextInfo: {
+          externalAdReply: {
+            title: 'Sticker',
+            body: `Dibuat oleh ${author}`,
+            mediaType: 1
+          }
+        }
+      },
+      { quoted: msg }
+    )
   })
 }
 
