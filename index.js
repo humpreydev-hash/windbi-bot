@@ -28,6 +28,8 @@ const {
 const ownerNumber = '6285929088764@s.whatsapp.net'; // Ganti dengan nomor WA kamu
 const botPrefix = ';'; // Menggunakan prefix sesuai permintaan Anda
 let selfMode = false; // State untuk mode self
+let reconnectAttempts = 0; // Counter untuk reconnect attempts
+const MAX_RECONNECT_ATTEMPTS = 5; // Maksimal reconnect attempts
 
 // Path untuk Railway (sesuaikan)
 const sessionId = process.env.RAILWAY_SERVICE_NAME || 'session';
@@ -137,6 +139,20 @@ async function stikerCommand(sock, message) {
   }
 }
 
+// Fungsi untuk membersihkan session
+async function clearSession() {
+  try {
+    if (fs.existsSync(authPath)) {
+      console.log("Menghapus session yang bermasalah...");
+      fs.rmSync(authPath, { recursive: true, force: true });
+      console.log("Session berhasil dihapus");
+      reconnectAttempts = 0; // Reset counter setelah hapus session
+    }
+  } catch (error) {
+    console.error("Gagal membersihkan session:", error);
+  }
+}
+
 // --- FUNGSI UTAMA BOT ---
 async function startBot() {
   console.log('Memulai bot WhatsApp...');
@@ -147,156 +163,172 @@ async function startBot() {
     console.log("Folder auth dibuat");
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(authPath);
-  const { version, isLatest } = await fetchLatestBaileysVersion();
-  console.log(`Menggunakan WA Web v${version.join('.')}, isLatest: ${isLatest}`);
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(authPath);
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    console.log(`Menggunakan WA Web v${version.join('.')}, isLatest: ${isLatest}`);
 
-  const sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    browser: ["Chrome", "Windows", "10.0"],
-    defaultStoreOptions: { syncHistory: false },
-    options: {
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      connectTimeoutMs: 120000, // 2 menit timeout
-      keepAliveIntervalMs: 30000,
-      qrTimeout: 120000, // QR timeout 2 menit
-      retryRequestDelayMs: 2000,
-      maxRetries: 20,
-      generateHighQualityLinkPreview: true,
-      auth: {
-        creds: state.creds,
-        keys: state.keys,
-      },
-      defaultQueryTimeoutMs: 60000,
-      fetchLatest: true,
-    }
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    
-    if (qr) {
-      console.log('\n=== QR CODE DITERIMA ===');
-      console.log('Buka link berikut di browser untuk melihat QR code:');
-      
-      // Generate QR code URL menggunakan API
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
-      console.log(qrUrl);
-      
-      console.log('\nAtau scan QR code di bawah ini:');
-      qrcode.generate(qr, { small: true });
-      console.log('=========================\n');
-      console.log('⚠️ QR Code hanya berlaku 2 menit! Segera scan!');
-      
-      // Simpan QR ke file untuk backup
-      fsPromises.writeFile(path.join(process.cwd(), 'qr.txt'), qr)
-        .then(() => console.log('QR juga disimpan di file qr.txt'))
-        .catch(err => console.error('Gagal menyimpan QR:', err));
-    }
-    
-    if (connection === 'close') {
-      const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      
-      console.log(`Connection closed. Status: ${statusCode}, Reconnecting: ${shouldReconnect}`);
-      
-      if (statusCode === DisconnectReason.connectionClosed) {
-        console.log('Koneksi ditutup, mencoba reconnect dalam 5 detik...');
-        setTimeout(() => startBot(), 5000);
-      } else if (statusCode === DisconnectReason.connectionLost) {
-        console.log('Koneksi hilang, mencoba reconnect dalam 5 detik...');
-        setTimeout(() => startBot(), 5000);
-      } else if (statusCode === DisconnectReason.timedOut) {
-        console.log('Koneksi timeout, mencoba reconnect dalam 10 detik...');
-        setTimeout(() => startBot(), 10000);
-      } else if (statusCode === DisconnectReason.badSession) {
-        console.log('Session tidak valid, menghapus session dan memulai ulang...');
-        if (fs.existsSync(authPath)) {
-          fs.rmSync(authPath, { recursive: true, force: true });
-        }
-        setTimeout(() => startBot(), 5000);
-      } else if (statusCode === 515) { // Restart Required
-        console.log('Restart diperlukan, memulai ulang bot tanpa menghapus session...');
-        setTimeout(() => startBot(), 3000); // Cepat restart untuk status 515
-      } else if (shouldReconnect) {
-        console.log('Mencoba reconnect dalam 5 detik...');
-        setTimeout(() => startBot(), 5000);
-      } else {
-        console.log('Session tidak valid, menghapus session dan memulai ulang...');
-        if (fs.existsSync(authPath)) {
-          fs.rmSync(authPath, { recursive: true, force: true });
-        }
-        setTimeout(() => startBot(), 5000);
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      browser: ["Chrome", "Windows", "10.0"],
+      defaultStoreOptions: { syncHistory: false },
+      options: {
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        connectTimeoutMs: 120000, // 2 menit timeout
+        keepAliveIntervalMs: 30000,
+        qrTimeout: 120000, // QR timeout 2 menit
+        retryRequestDelayMs: 2000,
+        maxRetries: 20,
+        generateHighQualityLinkPreview: true,
+        auth: {
+          creds: state.creds,
+          keys: state.keys,
+        },
+        defaultQueryTimeoutMs: 60000,
+        fetchLatest: true,
       }
-    } else if (connection === 'open') {
-      console.log('✅ BOT CONNECTED - Bot siap digunakan!');
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
       
-      // Kirim pesan notifikasi ke nomor sendiri
+      if (qr) {
+        console.log('\n=== QR CODE DITERIMA ===');
+        console.log('Buka link berikut di browser untuk melihat QR code:');
+        
+        // Generate QR code URL menggunakan API
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+        console.log(qrUrl);
+        
+        console.log('\nAtau scan QR code di bawah ini:');
+        qrcode.generate(qr, { small: true });
+        console.log('=========================\n');
+        console.log('⚠️ QR Code hanya berlaku 2 menit! Segera scan!');
+        
+        // Simpan QR ke file untuk backup
+        fsPromises.writeFile(path.join(process.cwd(), 'qr.txt'), qr)
+          .then(() => console.log('QR juga disimpan di file qr.txt'))
+          .catch(err => console.error('Gagal menyimpan QR:', err));
+      }
+      
+      if (connection === 'close') {
+        const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        
+        console.log(`Connection closed. Status: ${statusCode}, Reconnecting: ${shouldReconnect}`);
+        
+        if (statusCode === DisconnectReason.connectionClosed) {
+          console.log('Koneksi ditutup, mencoba reconnect dalam 5 detik...');
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === DisconnectReason.connectionLost) {
+          console.log('Koneksi hilang, mencoba reconnect dalam 5 detik...');
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === DisconnectReason.timedOut) {
+          console.log('Koneksi timeout, mencoba reconnect dalam 10 detik...');
+          setTimeout(() => startBot(), 10000);
+        } else if (statusCode === DisconnectReason.badSession) {
+          console.log('Session tidak valid, menghapus session dan memulai ulang...');
+          await clearSession();
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === 515) { // Restart Required
+          console.log('Restart diperlukan, memulai ulang bot tanpa menghapus session...');
+          setTimeout(() => startBot(), 3000); // Cepat restart untuk status 515
+        } else if (statusCode === 500) { // Internal Server Error
+          reconnectAttempts++;
+          console.log(`Internal Server Error. Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}`);
+          
+          if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.log('Max reconnect attempts reached, menghapus session...');
+            await clearSession();
+            setTimeout(() => startBot(), 10000);
+          } else {
+            console.log('Mencoba reconnect dalam 10 detik...');
+            setTimeout(() => startBot(), 10000);
+          }
+        } else if (shouldReconnect) {
+          console.log('Mencoba reconnect dalam 5 detik...');
+          setTimeout(() => startBot(), 5000);
+        } else {
+          console.log('Session tidak valid, menghapus session dan memulai ulang...');
+          await clearSession();
+          setTimeout(() => startBot(), 5000);
+        }
+      } else if (connection === 'open') {
+        console.log('✅ BOT CONNECTED - Bot siap digunakan!');
+        reconnectAttempts = 0; // Reset counter saat berhasil connect
+        
+        // Kirim pesan notifikasi ke nomor sendiri
+        try {
+          const ownNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          await sock.sendMessage(ownNumber, { 
+            text: "🤖 Bot WhatsApp aktif! Kirim ;stiker <nama> dengan reply gambar untuk membuat stiker." 
+          });
+        } catch (error) {
+          console.error('Gagal mengirim pesan notifikasi:', error);
+        }
+      }
+    });
+
+    // Listener untuk pesan masuk
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      const msg = messages[0];
+      if (!msg.message) return;
+      if (msg.message.protocolMessage) return;
+      if (msg.key.fromMe) return;
+
+      const senderJid = msg.key.remoteJid;
+      const messageText = extractMessageText(msg);
+      if (!messageText.startsWith(botPrefix)) return;
+
+      const command = messageText.toLowerCase().trim().split(/ +/)[0];
+
+      console.log(`\n--- Pesan Masuk ---`);
+      console.log(`Dari: ${senderJid}`);
+      console.log(`Command: ${command}`);
+      console.log(`--------------------\n`);
+
+      // --- SISTEM SELF MODE ---
+      if (selfMode && senderJid !== ownerNumber) {
+        return;
+      }
+      // --- AKHIR SISTEM ---
+
       try {
-        const ownNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-        await sock.sendMessage(ownNumber, { 
-          text: "🤖 Bot WhatsApp aktif! Kirim ;stiker <nama> dengan reply gambar untuk membuat stiker." 
-        });
+        switch (command) {
+          case ';menu': 
+          case ';help': 
+            await showMenu(sock, msg); 
+            break;
+          case ';stiker': 
+            await stikerCommand(sock, msg); 
+            break;
+          case ';self': 
+            if (senderJid === ownerNumber) await selfCommand(sock, msg); 
+            break;
+          case ';unself': 
+            if (senderJid === ownerNumber) await unselfCommand(sock, msg); 
+            break;
+          default: 
+            await sock.sendMessage(senderJid, { text: `Command "${command}" tidak ditemukan. Ketik ;menu` }); 
+            break;
+        }
       } catch (error) {
-        console.error('Gagal mengirim pesan notifikasi:', error);
+        console.error(`❌ Error saat menjalankan command ${command}:`, error);
+        await sock.sendMessage(senderJid, { text: 'Maaf, terjadi kesalahan.' });
       }
-    }
-  });
-
-  // Listener untuk pesan masuk
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    const msg = messages[0];
-    if (!msg.message) return;
-    if (msg.message.protocolMessage) return;
-    if (msg.key.fromMe) return;
-
-    const senderJid = msg.key.remoteJid;
-    const messageText = extractMessageText(msg);
-    if (!messageText.startsWith(botPrefix)) return;
-
-    const command = messageText.toLowerCase().trim().split(/ +/)[0];
-
-    console.log(`\n--- Pesan Masuk ---`);
-    console.log(`Dari: ${senderJid}`);
-    console.log(`Command: ${command}`);
-    console.log(`--------------------\n`);
-
-    // --- SISTEM SELF MODE ---
-    if (selfMode && senderJid !== ownerNumber) {
-      return;
-    }
-    // --- AKHIR SISTEM ---
-
-    try {
-      switch (command) {
-        case ';menu': 
-        case ';help': 
-          await showMenu(sock, msg); 
-          break;
-        case ';stiker': 
-          await stikerCommand(sock, msg); 
-          break;
-        case ';self': 
-          if (senderJid === ownerNumber) await selfCommand(sock, msg); 
-          break;
-        case ';unself': 
-          if (senderJid === ownerNumber) await unselfCommand(sock, msg); 
-          break;
-        default: 
-          await sock.sendMessage(senderJid, { text: `Command "${command}" tidak ditemukan. Ketik ;menu` }); 
-          break;
-      }
-    } catch (error) {
-      console.error(`❌ Error saat menjalankan command ${command}:`, error);
-      await sock.sendMessage(senderJid, { text: 'Maaf, terjadi kesalahan.' });
-    }
-  });
+    });
+    
+  } catch (error) {
+    console.error("Error in startBot:", error);
+    console.log("Memulai ulang bot dalam 10 detik...");
+    setTimeout(() => startBot(), 10000);
+  }
 }
 
 // Jalankan bot
