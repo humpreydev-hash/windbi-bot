@@ -1,15 +1,11 @@
-import * as baileys from "@whiskeysockets/baileys";
-import P from "pino";
-import qrcodeTerminal from "qrcode-terminal";
-import { Sticker, StickerTypes } from "wa-sticker-formatter";
-
-const {
-  default: makeWASocket,
+import makeWASocket, {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   DisconnectReason,
-  downloadContentFromMessage,
-} = baileys;
+  downloadContentFromMessage
+} from "@whiskeysockets/baileys";
+import qrcodeTerminal from "qrcode-terminal";
+import { writeFile } from "fs/promises";
 
 const AUTH_PATH = "auth_info";
 
@@ -22,27 +18,22 @@ async function startBot() {
   const sock = makeWASocket({
     auth: state,
     version,
-    logger: P({ level: "silent" }),
   });
 
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
-
     if (qr) {
-      // Tampilkan QR scan di terminal
       qrcodeTerminal.generate(qr, { small: true });
       console.log("Scan QR ini dengan WhatsApp kamu!");
     }
-
     if (connection === "close") {
       const reason =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log("Connection closed. Reconnecting...");
       if (reason) startBot();
     }
-
     if (connection === "open") {
       console.log("BOT CONNECTED");
     }
@@ -58,49 +49,36 @@ async function startBot() {
 
     if (!text?.startsWith(";stiker")) return;
 
+    // ambil media reply
     const quoted =
       msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
 
     if (!quoted?.imageMessage && !quoted?.videoMessage) {
       return sock.sendMessage(
         msg.key.remoteJid,
-        { text: "Reply gambar atau video dengan ;stiker <nama>" },
+        { text: "Reply gambar/video dengan ;stiker" },
         { quoted: msg }
       );
     }
 
-    // Nama pembuat stiker
-    const author = text.split(" ")[1] || "humpreyDev";
-
-    // Download media
     const mediaType = quoted.imageMessage ? "image" : "video";
-    const stream = await downloadContentFromMessage(quoted[`${mediaType}Message`], mediaType);
+    const stream = await downloadContentFromMessage(
+      quoted[`${mediaType}Message`],
+      mediaType
+    );
 
     let buffer = Buffer.from([]);
     for await (const chunk of stream) {
       buffer = Buffer.concat([buffer, chunk]);
     }
 
-    // Buat stiker
-    const sticker = new Sticker(buffer, {
-      pack: "MyPack",
-      author: author,
-      type: StickerTypes.FULL,
-      quality: 70,
-    });
-
-    const out = await sticker.toBuffer();
-
-    // Kirim stiker
+    // Kirim stiker langsung (WA bisa buat stiker dari buffer gambar/video)
     await sock.sendMessage(
       msg.key.remoteJid,
-      { sticker: out },
+      { sticker: buffer },
       { quoted: msg }
     );
   });
 }
 
-// Jalankan bot
-startBot().catch((err) => {
-  console.error("Fatal error:", err);
-});
+startBot().catch(console.error);
