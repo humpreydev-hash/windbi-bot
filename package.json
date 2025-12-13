@@ -1,24 +1,17 @@
 {
   "name": "bot-wa-stiker",
   "version": "1.0.0",
-  "description": "Bot WhatsApp Stiker menggunakan Node.js dan Baileys",
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node index.js"
   },
-  "keywords": [
-    "whatsapp-bot",
-    "baileys",
-    "sticker-bot",
-    "nodejs"
-  ],
-  "author": "humpreyDev",
-  "license": "MIT",
+  "engines": {
+    "node": "18.x"
+  },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.17.16",
+    "@whiskeysockets/baileys": "6.17.16",
     "qrcode-terminal": "^0.12.0",
-    "sharp": "^0.32.6"
+    "sharp": "0.32.6"
   }
 }
