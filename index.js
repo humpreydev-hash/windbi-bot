@@ -1,10 +1,8 @@
 import makeWASocket, {
   useMultiFileAuthState,
-  downloadContentFromMessage,
-  DisconnectReason
+  downloadContentFromMessage
 } from "@whiskeysockets/baileys"
 
-import qrcode from "qrcode-terminal"
 import sharp from "sharp"
 
 async function startBot() {
@@ -16,22 +14,17 @@ async function startBot() {
 
   sock.ev.on("creds.update", saveCreds)
 
+  // ===== LOGIN PAIRING CODE =====
+  if (!state.creds.registered) {
+    const nomorWA = "6281234567890" // GANTI NOMOR KAMU (tanpa +)
+    const code = await sock.requestPairingCode(nomorWA)
+    console.log("🔐 Pairing Code:", code)
+    console.log("Masukkan kode ini di WhatsApp kamu")
+  }
+
   sock.ev.on("connection.update", (update) => {
-    const { connection, lastDisconnect, qr } = update
-
-    if (qr) {
-      console.log("📱 Scan QR ini:")
-      qrcode.generate(qr, { small: true })
-    }
-
-    if (connection === "open") {
+    if (update.connection === "open") {
       console.log("✅ Bot berhasil login ke WhatsApp")
-    }
-
-    if (connection === "close") {
-      const reason = lastDisconnect?.error?.output?.statusCode
-      console.log("❌ Koneksi terputus:", reason)
-      startBot()
     }
   })
 
@@ -40,15 +33,12 @@ async function startBot() {
     if (!msg.message) return
 
     const from = msg.key.remoteJid
-
     const text =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       ""
 
-    // ======================
-    // COMMAND STIKER
-    // ======================
+    // ===== COMMAND STIKER =====
     if (text.startsWith(";stiker")) {
       const quoted =
         msg.message.extendedTextMessage?.contextInfo?.quotedMessage
