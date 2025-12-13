@@ -1,16 +1,8 @@
-import * as baileys from "@whiskeysockets/baileys";
+import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, downloadContentFromMessage } from "@whiskeysockets/baileys";
 import P from "pino";
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
-
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
-  DisconnectReason,
-  downloadContentFromMessage,
-} = baileys;
 
 // ===== PATH AUTH =====
 const AUTH_PATH = "auth_info";
