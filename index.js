@@ -1,23 +1,39 @@
 import makeWASocket, {
   useMultiFileAuthState,
-  downloadContentFromMessage
+  downloadContentFromMessage,
+  DisconnectReason
 } from "@whiskeysockets/baileys"
 
 import qrcode from "qrcode-terminal"
 import sharp from "sharp"
-import fs from "fs"
 
 async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
   const sock = makeWASocket({
-    auth: state,
-    printQRInTerminal: true
+    auth: state
   })
 
   sock.ev.on("creds.update", saveCreds)
 
-  console.log("🤖 Bot WhatsApp siap...")
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update
+
+    if (qr) {
+      console.log("📱 Scan QR ini:")
+      qrcode.generate(qr, { small: true })
+    }
+
+    if (connection === "open") {
+      console.log("✅ Bot berhasil login ke WhatsApp")
+    }
+
+    if (connection === "close") {
+      const reason = lastDisconnect?.error?.output?.statusCode
+      console.log("❌ Koneksi terputus:", reason)
+      startBot()
+    }
+  })
 
   sock.ev.on("messages.upsert", async ({ messages }) => {
     const msg = messages[0]
@@ -47,7 +63,6 @@ async function startBot() {
       const pembuat =
         text.replace(";stiker", "").trim() || "Unknown"
 
-      // download gambar
       const stream = await downloadContentFromMessage(
         quoted.imageMessage,
         "image"
@@ -58,7 +73,6 @@ async function startBot() {
         buffer = Buffer.concat([buffer, chunk])
       }
 
-      // convert ke sticker (webp)
       const stickerBuffer = await sharp(buffer)
         .resize(512, 512, { fit: "contain" })
         .webp()
@@ -66,9 +80,7 @@ async function startBot() {
 
       await sock.sendMessage(
         from,
-        {
-          sticker: stickerBuffer
-        },
+        { sticker: stickerBuffer },
         {
           stickerMetadata: {
             pack: "Bot Stiker",
