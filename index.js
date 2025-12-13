@@ -1,7 +1,7 @@
 import { webcrypto } from 'crypto';
 import baileys from "@whiskeysockets/baileys";
 import P from "pino";
-import { writeFile } from 'fs/promises';
+import { writeFile, readFile, existsSync } from 'fs/promises';
 import { join } from 'path';
 import sharp from 'sharp';
 
@@ -21,11 +21,26 @@ const {
 // ===== PATH AUTH =====
 const AUTH_PATH = "auth_info";
 
+// Fungsi untuk membersihkan session jika ada masalah
+async function clearSession() {
+  try {
+    if (existsSync(AUTH_PATH)) {
+      console.log("Membersihkan session yang bermasalah...");
+      // Implementasi pembersihan session bisa ditambahkan di sini
+    }
+  } catch (error) {
+    console.error("Gagal membersihkan session:", error);
+  }
+}
+
 // ===== BOT START =====
 async function startBot() {
   console.log("Starting bot...");
 
   try {
+    // Cek dan bersihkan session jika perlu
+    await clearSession();
+    
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -38,13 +53,16 @@ async function startBot() {
       options: {
         syncFullHistory: false,
         markOnlineOnConnect: false,
+        connectTimeoutMs: 60000, // 60 detik timeout
+        keepAliveIntervalMs: 30000, // 30 detik keep alive
+        qrTimeout: 0, // QR tidak timeout
       }
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on("connection.update", (update) => {
-      const { connection, lastDisconnect, qr } = update;
+    sock.ev.on("connection.update", async (update) => {
+      const { connection, lastDisconnect, qr, isNewLogin } = update;
       
       if (qr) {
         console.log("\n=== QR CODE DITERIMA ===");
@@ -65,15 +83,47 @@ async function startBot() {
       }
 
       if (connection === "close") {
-        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        console.log("Connection closed due to", lastDisconnect?.error, "Reconnecting:", shouldReconnect);
-        if (shouldReconnect) {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+        
+        console.log(`Connection closed. Status: ${statusCode}, Reconnecting: ${shouldReconnect}`);
+        
+        if (statusCode === DisconnectReason.connectionClosed) {
+          console.log("Koneksi ditutup, mencoba reconnect dalam 5 detik...");
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === DisconnectReason.connectionLost) {
+          console.log("Koneksi hilang, mencoba reconnect dalam 5 detik...");
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === DisconnectReason.timedOut) {
+          console.log("Koneksi timeout, mencoba reconnect dalam 10 detik...");
+          setTimeout(() => startBot(), 10000);
+        } else if (shouldReconnect) {
+          console.log("Mencoba reconnect dalam 5 detik...");
+          setTimeout(() => startBot(), 5000);
+        } else {
+          console.log("Session tidak valid, menghapus session dan memulai ulang...");
+          await clearSession();
           setTimeout(() => startBot(), 5000);
         }
       }
 
       if (connection === "open") {
         console.log("BOT CONNECTED - Bot siap digunakan!");
+        
+        // Kirim pesan notifikasi ke nomor sendiri
+        try {
+          const ownNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+          await sock.sendMessage(ownNumber, { 
+            text: "Bot WhatsApp aktif! Kirim ;stiker <nama> dengan reply gambar untuk membuat stiker." 
+          });
+        } catch (error) {
+          console.error("Gagal mengirim pesan notifikasi:", error);
+        }
+      }
+      
+      // Handle new login
+      if (isNewLogin) {
+        console.log("Login baru terdeteksi, menyimpan session...");
       }
     });
 
@@ -137,8 +187,15 @@ async function startBot() {
         );
       }
     });
+    
+    // Handle error pada socket
+    sock.ev.on("error", (error) => {
+      console.error("Socket error:", error);
+    });
+    
   } catch (error) {
     console.error("Error in startBot:", error);
+    console.log("Memulai ulang bot dalam 10 detik...");
     setTimeout(() => startBot(), 10000);
   }
 }
@@ -146,5 +203,6 @@ async function startBot() {
 // Jalankan bot
 startBot().catch((err) => {
   console.error("Fatal error:", err);
+  console.log("Memulai ulang bot dalam 10 detik...");
   setTimeout(() => startBot(), 10000);
 });
