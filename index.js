@@ -35,7 +35,6 @@ async function startBot() {
       logger: P({ level: "silent" }),
       printQRInTerminal: true,
       browser: ["Ubuntu", "Chrome", "20.0.04"],
-      // Tambahkan opsi untuk mengatasi masalah crypto
       options: {
         syncFullHistory: false,
         markOnlineOnConnect: false,
@@ -48,20 +47,33 @@ async function startBot() {
       const { connection, lastDisconnect, qr } = update;
       
       if (qr) {
-        console.log("QR Code received, please scan:");
+        console.log("\n=== QR CODE DITERIMA ===");
+        console.log("Buka link berikut di browser untuk melihat QR code:");
+        
+        // Generate QR code URL menggunakan API
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+        console.log(qrUrl);
+        
+        console.log("\nAtau scan QR code di bawah ini:");
+        console.log(qr);
+        console.log("=========================\n");
+        
+        // Simpan QR ke file untuk backup
+        writeFile(join(process.cwd(), 'qr.txt'), qr)
+          .then(() => console.log("QR juga disimpan di file qr.txt"))
+          .catch(err => console.error("Gagal menyimpan QR:", err));
       }
 
       if (connection === "close") {
         const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
         console.log("Connection closed due to", lastDisconnect?.error, "Reconnecting:", shouldReconnect);
         if (shouldReconnect) {
-          // Tambahkan delay sebelum reconnect
           setTimeout(() => startBot(), 5000);
         }
       }
 
       if (connection === "open") {
-        console.log("BOT CONNECTED");
+        console.log("BOT CONNECTED - Bot siap digunakan!");
       }
     });
 
@@ -127,7 +139,6 @@ async function startBot() {
     });
   } catch (error) {
     console.error("Error in startBot:", error);
-    // Tambahkan delay sebelum restart
     setTimeout(() => startBot(), 10000);
   }
 }
@@ -135,6 +146,5 @@ async function startBot() {
 // Jalankan bot
 startBot().catch((err) => {
   console.error("Fatal error:", err);
-  // Tambahkan delay sebelum restart
   setTimeout(() => startBot(), 10000);
 });
