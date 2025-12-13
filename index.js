@@ -2,7 +2,7 @@ import { webcrypto } from 'crypto';
 import baileys from "@whiskeysockets/baileys";
 import P from "pino";
 import { writeFile, readFile } from 'fs/promises';
-import { existsSync } from 'fs'; // Perbaikan: existsSync harus diimpor dari fs biasa
+import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import sharp from 'sharp';
 
@@ -22,12 +22,13 @@ const {
 // ===== PATH AUTH =====
 const AUTH_PATH = "auth_info";
 
-// Fungsi untuk membersihkan session jika ada masalah
+// Fungsi untuk membersihkan session
 async function clearSession() {
   try {
     if (existsSync(AUTH_PATH)) {
-      console.log("Membersihkan session yang bermasalah...");
-      // Implementasi pembersihan session bisa ditambahkan di sini
+      console.log("Menghapus session yang bermasalah...");
+      rmSync(AUTH_PATH, { recursive: true, force: true });
+      console.log("Session berhasil dihapus");
     }
   } catch (error) {
     console.error("Gagal membersihkan session:", error);
@@ -39,7 +40,7 @@ async function startBot() {
   console.log("Starting bot...");
 
   try {
-    // Cek dan bersihkan session jika perlu
+    // Hapus session lama untuk memastikan QR baru
     await clearSession();
     
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
@@ -50,13 +51,20 @@ async function startBot() {
       version,
       logger: P({ level: "silent" }),
       printQRInTerminal: true,
-      browser: ["Ubuntu", "Chrome", "20.0.04"],
+      browser: ["Chrome", "Windows", "10.0"], // Ganti browser info
       options: {
         syncFullHistory: false,
         markOnlineOnConnect: false,
-        connectTimeoutMs: 60000, // 60 detik timeout
-        keepAliveIntervalMs: 30000, // 30 detik keep alive
-        qrTimeout: 0, // QR tidak timeout
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 30000,
+        qrTimeout: 60000, // QR timeout 60 detik
+        retryRequestDelayMs: 2000,
+        maxRetries: 10,
+        generateHighQualityLinkPreview: true,
+        auth: {
+          creds: state.creds,
+          keys: state.keys,
+        }
       }
     });
 
@@ -76,6 +84,7 @@ async function startBot() {
         console.log("\nAtau scan QR code di bawah ini:");
         console.log(qr);
         console.log("=========================\n");
+        console.log("⚠️ QR Code hanya berlaku 60 detik! Segera scan!");
         
         // Simpan QR ke file untuk backup
         writeFile(join(process.cwd(), 'qr.txt'), qr)
@@ -98,6 +107,13 @@ async function startBot() {
         } else if (statusCode === DisconnectReason.timedOut) {
           console.log("Koneksi timeout, mencoba reconnect dalam 10 detik...");
           setTimeout(() => startBot(), 10000);
+        } else if (statusCode === DisconnectReason.badSession) {
+          console.log("Session tidak valid, menghapus session dan memulai ulang...");
+          await clearSession();
+          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === DisconnectReason.restartRequired) {
+          console.log("Restart diperlukan, memulai ulang bot...");
+          setTimeout(() => startBot(), 5000);
         } else if (shouldReconnect) {
           console.log("Mencoba reconnect dalam 5 detik...");
           setTimeout(() => startBot(), 5000);
@@ -109,13 +125,13 @@ async function startBot() {
       }
 
       if (connection === "open") {
-        console.log("BOT CONNECTED - Bot siap digunakan!");
+        console.log("✅ BOT CONNECTED - Bot siap digunakan!");
         
         // Kirim pesan notifikasi ke nomor sendiri
         try {
           const ownNumber = sock.user.id.split(':')[0] + '@s.whatsapp.net';
           await sock.sendMessage(ownNumber, { 
-            text: "Bot WhatsApp aktif! Kirim ;stiker <nama> dengan reply gambar untuk membuat stiker." 
+            text: "🤖 Bot WhatsApp aktif! Kirim ;stiker <nama> dengan reply gambar untuk membuat stiker." 
           });
         } catch (error) {
           console.error("Gagal mengirim pesan notifikasi:", error);
@@ -178,7 +194,7 @@ async function startBot() {
           { quoted: msg }
         );
         
-        console.log("Sticker sent successfully");
+        console.log("✅ Sticker sent successfully");
       } catch (error) {
         console.error("Error creating sticker:", error);
         sock.sendMessage(
