@@ -1,9 +1,4 @@
-import makeWASocket, { 
-  DisconnectReason, 
-  useMultiFileAuthState, 
-  fetchLatestBaileysVersion, 
-  downloadContentFromMessage 
-} from '@whiskeysockets/baileys';
+import * as baileys from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import path from 'path';
@@ -16,6 +11,15 @@ import { existsSync, mkdirSync, rmSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // -----------------------------
+
+// Ambil fungsi yang diperlukan dari baileys
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  downloadContentFromMessage
+} = baileys;
 
 // --- KONFIGURASI BOT ---
 const ownerNumber = '6285929088764@s.whatsapp.net'; // Ganti dengan nomor WA kamu
