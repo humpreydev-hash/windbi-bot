@@ -1,126 +1,106 @@
-// ==============================
-// BOT STIKER WA - SIMPLE & STABLE
-// Baileys v6.6.0 | ESM | Railway
-// ==============================
+import * as baileys from "@whiskeysockets/baileys";
+import P from "pino";
+import qrcodeTerminal from "qrcode-terminal";
+import { Sticker, StickerTypes } from "wa-sticker-formatter";
 
-import makeWASocket from '@whiskeysockets/baileys'
-import {
-  DisconnectReason,
+const {
+  default: makeWASocket,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  downloadContentFromMessage
-} from '@whiskeysockets/baileys'
+  DisconnectReason,
+  downloadContentFromMessage,
+} = baileys;
 
-import P from 'pino'
-import path from 'path'
-import { fileURLToPath } from 'url'
+const AUTH_PATH = "auth_info";
 
-// ===== FIX __dirname UNTUK ESM =====
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
-// ===== PATH AUTH =====
-const authPath = path.join(__dirname, 'auth_info')
-
-// ===== NOMOR UNTUK PAIRING CODE =====
-// GANTI DENGAN NOMOR WA KAMU (format internasional, tanpa +)
-const pairingNumber = '6285929088764'
-
-// ===================================
 async function startBot() {
-  console.log('Starting bot...')
+  console.log("Starting bot...");
 
-  const { state, saveCreds } = await useMultiFileAuthState(authPath)
-  const { version } = await fetchLatestBaileysVersion()
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
+  const { version } = await fetchLatestBaileysVersion();
 
   const sock = makeWASocket({
-    version,
     auth: state,
-    logger: P({ level: 'silent' }),
-    printQRInTerminal: false
-  })
+    version,
+    logger: P({ level: "silent" }),
+  });
 
-  // ===== PAIRING CODE LOGIN =====
-  if (!sock.authState.creds.registered) {
-    const code = await sock.requestPairingCode(pairingNumber)
-    console.log('PAIRING CODE:', code)
-  }
+  sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on("connection.update", (update) => {
+    const { connection, lastDisconnect, qr } = update;
 
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update
-
-    if (connection === 'close') {
-      const reason = lastDisconnect?.error?.output?.statusCode
-      if (reason !== DisconnectReason.loggedOut) {
-        console.log('Reconnect...')
-        startBot()
-      }
+    if (qr) {
+      // Tampilkan QR scan di terminal
+      qrcodeTerminal.generate(qr, { small: true });
+      console.log("Scan QR ini dengan WhatsApp kamu!");
     }
 
-    if (connection === 'open') {
-      console.log('BOT CONNECTED')
+    if (connection === "close") {
+      const reason =
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("Connection closed. Reconnecting...");
+      if (reason) startBot();
     }
-  })
 
-  // ===== HANDLER PESAN =====
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const msg = messages[0]
-    if (!msg.message) return
-    if (msg.key.fromMe) return
+    if (connection === "open") {
+      console.log("BOT CONNECTED");
+    }
+  });
 
-    const from = msg.key.remoteJid
+  sock.ev.on("messages.upsert", async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg?.message || msg.key.fromMe) return;
+
     const text =
       msg.message.conversation ||
-      msg.message.extendedTextMessage?.text
+      msg.message.extendedTextMessage?.text;
 
-    if (!text) return
-    if (!text.startsWith(';stiker')) return
+    if (!text?.startsWith(";stiker")) return;
 
     const quoted =
-      msg.message.extendedTextMessage?.contextInfo?.quotedMessage
+      msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
 
-    if (!quoted || !quoted.imageMessage) {
+    if (!quoted?.imageMessage && !quoted?.videoMessage) {
       return sock.sendMessage(
-        from,
-        { text: 'Reply gambar dengan ;stiker <nama>' },
+        msg.key.remoteJid,
+        { text: "Reply gambar atau video dengan ;stiker <nama>" },
         { quoted: msg }
-      )
+      );
     }
 
-    const author = text.split(' ')[1] || 'humpreyDev'
+    // Nama pembuat stiker
+    const author = text.split(" ")[1] || "humpreyDev";
 
-    // ===== DOWNLOAD GAMBAR =====
-    const stream = await downloadContentFromMessage(
-      quoted.imageMessage,
-      'image'
-    )
+    // Download media
+    const mediaType = quoted.imageMessage ? "image" : "video";
+    const stream = await downloadContentFromMessage(quoted[`${mediaType}Message`], mediaType);
 
-    let buffer = Buffer.from([])
+    let buffer = Buffer.from([]);
     for await (const chunk of stream) {
-      buffer = Buffer.concat([buffer, chunk])
+      buffer = Buffer.concat([buffer, chunk]);
     }
 
-    // ===== KIRIM STIKER =====
+    // Buat stiker
+    const sticker = new Sticker(buffer, {
+      pack: "MyPack",
+      author: author,
+      type: StickerTypes.FULL,
+      quality: 70,
+    });
+
+    const out = await sticker.toBuffer();
+
+    // Kirim stiker
     await sock.sendMessage(
-      from,
-      {
-        sticker: buffer,
-        contextInfo: {
-          externalAdReply: {
-            title: 'Sticker',
-            body: `Dibuat oleh ${author}`,
-            mediaType: 1
-          }
-        }
-      },
+      msg.key.remoteJid,
+      { sticker: out },
       { quoted: msg }
-    )
-  })
+    );
+  });
 }
 
-// ===== RUN BOT =====
-startBot().catch(err => {
-  console.error('Fatal Error:', err)
-})
+// Jalankan bot
+startBot().catch((err) => {
+  console.error("Fatal error:", err);
+});
