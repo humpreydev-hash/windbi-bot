@@ -2,7 +2,7 @@ import { webcrypto } from 'crypto';
 import baileys from "@whiskeysockets/baileys";
 import P from "pino";
 import { writeFile, readFile } from 'fs/promises';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, rmSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import sharp from 'sharp';
 
@@ -35,13 +35,21 @@ async function clearSession() {
   }
 }
 
+// Fungsi untuk memastikan folder auth ada
+function ensureAuthFolder() {
+  if (!existsSync(AUTH_PATH)) {
+    mkdirSync(AUTH_PATH, { recursive: true });
+    console.log("Folder auth dibuat");
+  }
+}
+
 // ===== BOT START =====
 async function startBot() {
   console.log("Starting bot...");
 
   try {
-    // Hapus session lama untuk memastikan QR baru
-    await clearSession();
+    // Pastikan folder auth ada
+    ensureAuthFolder();
     
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_PATH);
     const { version } = await fetchLatestBaileysVersion();
@@ -51,20 +59,23 @@ async function startBot() {
       version,
       logger: P({ level: "silent" }),
       printQRInTerminal: true,
-      browser: ["Chrome", "Windows", "10.0"], // Ganti browser info
+      browser: ["Chrome", "Windows", "10.0"],
       options: {
         syncFullHistory: false,
         markOnlineOnConnect: false,
-        connectTimeoutMs: 60000,
+        connectTimeoutMs: 120000, // Tingkatkan timeout menjadi 2 menit
         keepAliveIntervalMs: 30000,
-        qrTimeout: 60000, // QR timeout 60 detik
+        qrTimeout: 120000, // QR timeout 2 menit
         retryRequestDelayMs: 2000,
-        maxRetries: 10,
+        maxRetries: 20, // Tingkatkan max retries
         generateHighQualityLinkPreview: true,
         auth: {
           creds: state.creds,
           keys: state.keys,
-        }
+        },
+        // Tambahkan opsi untuk meningkatkan stabilitas
+        defaultQueryTimeoutMs: 60000,
+        fetchLatest: true,
       }
     });
 
@@ -84,7 +95,7 @@ async function startBot() {
         console.log("\nAtau scan QR code di bawah ini:");
         console.log(qr);
         console.log("=========================\n");
-        console.log("⚠️ QR Code hanya berlaku 60 detik! Segera scan!");
+        console.log("⚠️ QR Code hanya berlaku 2 menit! Segera scan!");
         
         // Simpan QR ke file untuk backup
         writeFile(join(process.cwd(), 'qr.txt'), qr)
@@ -111,9 +122,9 @@ async function startBot() {
           console.log("Session tidak valid, menghapus session dan memulai ulang...");
           await clearSession();
           setTimeout(() => startBot(), 5000);
-        } else if (statusCode === DisconnectReason.restartRequired) {
-          console.log("Restart diperlukan, memulai ulang bot...");
-          setTimeout(() => startBot(), 5000);
+        } else if (statusCode === 515) { // Restart Required
+          console.log("Restart diperlukan, memulai ulang bot tanpa menghapus session...");
+          setTimeout(() => startBot(), 3000); // Cepat restart untuk status 515
         } else if (shouldReconnect) {
           console.log("Mencoba reconnect dalam 5 detik...");
           setTimeout(() => startBot(), 5000);
