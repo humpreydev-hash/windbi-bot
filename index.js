@@ -8,24 +8,25 @@ async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState("./auth_info")
 
   const sock = makeWASocket({
-    auth: state
+    auth: state,
+    printQRInTerminal: false
   })
 
   sock.ev.on("creds.update", saveCreds)
 
-  let pairingRequested = false
+  let pairingDone = false
 
   sock.ev.on("connection.update", async (update) => {
     const { connection } = update
 
     if (connection === "open") {
-      console.log("✅ Socket WhatsApp terhubung")
+      console.log("✅ WhatsApp socket OPEN")
 
-      if (!state.creds.registered && !pairingRequested) {
-        pairingRequested = true
+      if (!state.creds.registered && !pairingDone) {
+        pairingDone = true
 
-        const nomorWA = "628xxxxxxxxxx" // tanpa +
-        const code = await sock.requestPairingCode(nomorWA)
+        const nomor = "628xxxxxxxxxx" // tanpa +
+        const code = await sock.requestPairingCode(nomor)
 
         console.log("🔐 PAIRING CODE:", code)
         console.log("Masukkan di WhatsApp > Perangkat tertaut")
@@ -54,7 +55,7 @@ async function startBot() {
         return
       }
 
-      const pembuat =
+      const author =
         text.replace(";stiker", "").trim() || "Unknown"
 
       const stream = await downloadContentFromMessage(
@@ -78,7 +79,7 @@ async function startBot() {
         {
           stickerMetadata: {
             pack: "Bot Stiker",
-            author: pembuat
+            author
           }
         }
       )
