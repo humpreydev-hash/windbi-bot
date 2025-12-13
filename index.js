@@ -1,11 +1,14 @@
-import * as baileys from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import qrcode from 'qrcode-terminal';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import sharp from 'sharp';
-import { writeFile, readFile, unlink } from 'fs/promises';
-import { existsSync, mkdirSync, rmSync } from 'fs';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+
+const baileys = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const qrcode = require('qrcode-terminal');
+const path = require('path');
+const { fileURLToPath } = require('url');
+const sharp = require('sharp');
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 
 // --- PENYESUAIAN UNTUK ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -139,8 +142,8 @@ async function startBot() {
   console.log('Memulai bot WhatsApp...');
 
   // Pastikan folder auth ada
-  if (!existsSync(authPath)) {
-    mkdirSync(authPath, { recursive: true });
+  if (!fs.existsSync(authPath)) {
+    fs.mkdirSync(authPath, { recursive: true });
     console.log("Folder auth dibuat");
   }
 
@@ -191,7 +194,7 @@ async function startBot() {
       console.log('⚠️ QR Code hanya berlaku 2 menit! Segera scan!');
       
       // Simpan QR ke file untuk backup
-      writeFile(path.join(process.cwd(), 'qr.txt'), qr)
+      fsPromises.writeFile(path.join(process.cwd(), 'qr.txt'), qr)
         .then(() => console.log('QR juga disimpan di file qr.txt'))
         .catch(err => console.error('Gagal menyimpan QR:', err));
     }
@@ -213,8 +216,8 @@ async function startBot() {
         setTimeout(() => startBot(), 10000);
       } else if (statusCode === DisconnectReason.badSession) {
         console.log('Session tidak valid, menghapus session dan memulai ulang...');
-        if (existsSync(authPath)) {
-          rmSync(authPath, { recursive: true, force: true });
+        if (fs.existsSync(authPath)) {
+          fs.rmSync(authPath, { recursive: true, force: true });
         }
         setTimeout(() => startBot(), 5000);
       } else if (statusCode === 515) { // Restart Required
@@ -225,8 +228,8 @@ async function startBot() {
         setTimeout(() => startBot(), 5000);
       } else {
         console.log('Session tidak valid, menghapus session dan memulai ulang...');
-        if (existsSync(authPath)) {
-          rmSync(authPath, { recursive: true, force: true });
+        if (fs.existsSync(authPath)) {
+          fs.rmSync(authPath, { recursive: true, force: true });
         }
         setTimeout(() => startBot(), 5000);
       }
