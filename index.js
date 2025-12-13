@@ -1,7 +1,8 @@
 import { webcrypto } from 'crypto';
 import baileys from "@whiskeysockets/baileys";
 import P from "pino";
-import { writeFile, readFile, existsSync } from 'fs/promises';
+import { writeFile, readFile } from 'fs/promises';
+import { existsSync } from 'fs'; // Perbaikan: existsSync harus diimpor dari fs biasa
 import { join } from 'path';
 import sharp from 'sharp';
 
